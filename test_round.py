@@ -1,4 +1,5 @@
 import asyncio
+import json
 import tempfile
 import unittest
 from types import SimpleNamespace
@@ -12,6 +13,7 @@ import balancer
 from dispatcher import Dispatcher
 from bandit import LinUCB, features
 from monitor import collect_one
+from experiment import select_questions
 
 METRICS = {'cpu_pct': 10, 'memory_pct': 30, 'gpus': [{'utilization_pct': 20, 'memory_used_mib': 100, 'memory_total_mib': 1000}]}
 CONFIG = {'model': 'model', 'model_digest': 'digest'}
@@ -36,6 +38,9 @@ class Tests(unittest.TestCase):
             performance = reopened.recent_performance('a')
             self.assertEqual(performance['input_tokens_per_second'], 50)
             self.assertEqual(performance['output_tokens_per_second'], 50)
+            reopened.update('a', x, 10, True, 100, 'code', 500, 450, learn=False)
+            self.assertEqual(reopened.state('a')[2], 1)
+            self.assertEqual(reopened.db.execute('select count(*) from outcomes').fetchone()[0], 2)
             reopened.db.close()
 
     def test_feature_includes_prediction(self):
@@ -159,6 +164,41 @@ class Tests(unittest.TestCase):
                 self.assertEqual(len(q.waiters), 0)
                 bandit.db.close()
         asyncio.run(check())
+
+    def test_round_robin_uses_each_available_server(self):
+        async def check():
+            import time
+            with tempfile.TemporaryDirectory() as directory:
+                bandit = LinUCB(str(Path(directory) / 'rr.sqlite3'))
+                servers = [{'id': x, 'max_inflight': 1} for x in ('a', 'b', 'c')]
+                state = SimpleNamespace(lock=asyncio.Lock(), bandit=bandit,
+                    config={'servers': servers, 'policy': 'round_robin', 'max_metric_age_seconds': 10},
+                    active=dict.fromkeys(('a', 'b', 'c'), 0),
+                    status={x: {'healthy': True, 'checked_at': time.time(), 'metrics': METRICS} for x in ('a', 'b', 'c')})
+                dispatcher = Dispatcher(state)
+                chosen = []
+                for _ in range(3):
+                    server, _, _ = await dispatcher.reserve(100, 200)
+                    chosen.append(server['id'])
+                self.assertEqual(chosen, ['a', 'b', 'c'])
+                bandit.db.close()
+        asyncio.run(check())
+
+    def test_experiment_holds_out_domains_and_filters_truncated(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            questions = [
+                {'id': 'train', 'domain': '소프트웨어', 'category': 'code', 'prompt': 'test'},
+                {'id': 'test', 'domain': '학교·교육', 'category': 'code', 'prompt': 'test2'},
+                {'id': 'bad', 'domain': '학교·교육', 'category': 'code', 'prompt': 'bad'},
+            ]
+            results = [{'id': x['id'], 'status': 'ok', 'done_reason': 'length' if x['id'] == 'bad' else 'stop',
+                        'input_tokens': 100, 'output_tokens': 300} for x in questions]
+            for name, rows in [('questions', questions), ('results', results)]:
+                (root / name).write_text(''.join(json.dumps(x, ensure_ascii=False) + '\n' for x in rows), encoding='utf-8')
+            train, test = select_questions(root / 'questions', root / 'results', 42, 1, 1)
+            self.assertEqual([r['id'] for r in train], ['train'])
+            self.assertEqual([r['id'] for r in test], ['test'])
 
 
 if __name__ == '__main__':

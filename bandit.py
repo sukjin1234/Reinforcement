@@ -46,15 +46,16 @@ class LinUCB:
         return float(b @ inv_x + self.alpha * np.sqrt(max(0, x @ inv_x)))
 
     def update(self, server_id, x, duration, success, input_tokens, category, predicted, actual,
-               prompt_count=None, prompt_duration_ns=None, eval_duration_ns=None, queue_seconds=None):
+               prompt_count=None, prompt_duration_ns=None, eval_duration_ns=None, queue_seconds=None, learn=True):
         # Bounded reward prevents one timeout dominating the policy.
         reward = -min(math.log1p(max(duration, 0) / 10), 5.0) if success else -5.0
         a, b, n = self.state(server_id)
         a += np.outer(x, x)
         b += reward * x
         with self.db:
-            self.db.execute('INSERT OR REPLACE INTO arms VALUES (?,?,?,?)',
-                            (server_id, json.dumps(a.tolist()), json.dumps(b.tolist()), n + 1))
+            if learn:
+                self.db.execute('INSERT OR REPLACE INTO arms VALUES (?,?,?,?)',
+                                (server_id, json.dumps(a.tolist()), json.dumps(b.tolist()), n + 1))
             self.db.execute('INSERT INTO outcomes(timestamp,server_id,input_tokens,category,predicted_tokens,actual_tokens,duration_seconds,success,reward,context,prompt_count,prompt_duration_ns,eval_duration_ns,queue_seconds) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)',
                             (time.time(), server_id, input_tokens, category, predicted, actual,
                              duration, int(success), reward, json.dumps(x.tolist()), prompt_count,

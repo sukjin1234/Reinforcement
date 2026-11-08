@@ -13,6 +13,7 @@ class Dispatcher:
         self.waiters = deque()
         self.rejected = 0
         self.timed_out = 0
+        self.next_server = 0
 
     async def reserve(self, input_tokens, predicted):
         state = self.state
@@ -38,7 +39,17 @@ class Dispatcher:
                             x = features(snapshot['metrics'], input_tokens, predicted, state.active[sid])
                             eligible.append((state.bandit.score(sid, x), server, x))
                     if eligible:
-                        _, server, x = max(eligible, key=lambda item: (item[0], item[1]['id']))
+                        if state.config.get('policy', 'linucb') == 'round_robin':
+                            ordered = state.config['servers']
+                            eligible_ids = {item[1]['id']: item for item in eligible}
+                            for offset in range(len(ordered)):
+                                index = (self.next_server + offset) % len(ordered)
+                                if ordered[index]['id'] in eligible_ids:
+                                    _, server, x = eligible_ids[ordered[index]['id']]
+                                    self.next_server = (index + 1) % len(ordered)
+                                    break
+                        else:
+                            _, server, x = max(eligible, key=lambda item: (item[0], item[1]['id']))
                         state.active[server['id']] += 1
                         self.waiters.popleft()
                         self.condition.notify_all()

@@ -39,7 +39,7 @@ async def lifespan(app):
         raise RuntimeError('Classifier and token predictor categories do not match')
     app.state.config, app.state.bundle = config, bundle
     app.state.classifier = classifier
-    app.state.bandit = LinUCB(config['state_db'])
+    app.state.bandit = LinUCB(config['state_db'], alpha=config.get('bandit_alpha', 0.7))
     app.state.lock = asyncio.Lock()
     app.state.active = {s['id']: 0 for s in config['servers']}
     app.state.status = {}
@@ -138,6 +138,7 @@ async def chat(request: ChatRequest):
             state.active[sid] -= 1
             try:
                 state.bandit.update(sid, x, duration + queue_seconds, success, request.input_tokens, category,
-                                    predicted, actual, prompt_count, prompt_duration, eval_duration, queue_seconds)
+                                    predicted, actual, prompt_count, prompt_duration, eval_duration, queue_seconds,
+                                    learn=state.config.get('training_enabled', True))
             finally:
                 state.dispatcher.condition.notify_all()

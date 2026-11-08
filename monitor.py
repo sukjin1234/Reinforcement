@@ -21,6 +21,10 @@ def read_config(path):
             raise ValueError(f'{name} must be positive')
     if config.get('queue_max_size', 100) < 1 or config.get('queue_wait_seconds', 60) <= 0:
         raise ValueError('queue capacity and wait time must be positive')
+    if config.get('policy', 'linucb') not in ('linucb', 'round_robin'):
+        raise ValueError('policy must be linucb or round_robin')
+    if not isinstance(config.get('training_enabled', True), bool) or config.get('bandit_alpha', 0.7) < 0:
+        raise ValueError('invalid training_enabled or bandit_alpha')
     return config
 
 
