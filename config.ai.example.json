@@ -1,0 +1,13 @@
+{
+  "model": "qwen3:8b-q4_K_M",
+  "model_digest": "500a1f067a9f782620b40bee6f7b0c89e17ae61f686b92c24933e4ca4b2b8b41",
+  "predictor_path": "/home/ubuntu/qwen3_8b_100k_questions_bundle/token_predictor/artifacts/model.joblib",
+  "metrics_token_env": "METRICS_TOKEN",
+  "poll_seconds": 3,
+  "max_metric_age_seconds": 12,
+  "request_timeout_seconds": 300,
+  "state_db": "round.sqlite3",
+  "servers": [
+    {"id": "ai", "metrics_url": "http://127.0.0.1:9109/metrics", "ollama_url": "http://127.0.0.1:11434", "max_inflight": 1}
+  ]
+}
