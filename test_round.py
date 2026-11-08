@@ -14,6 +14,7 @@ from dispatcher import Dispatcher
 from bandit import LinUCB, features
 from monitor import collect_one
 from experiment import select_questions
+from apply_policy import apply
 
 METRICS = {'cpu_pct': 10, 'memory_pct': 30, 'gpus': [{'utilization_pct': 20, 'memory_used_mib': 100, 'memory_total_mib': 1000}]}
 CONFIG = {'model': 'model', 'model_digest': 'digest'}
@@ -215,6 +216,29 @@ class Tests(unittest.TestCase):
             train, test = select_questions(root / 'questions', root / 'results', 42, 1, 1)
             self.assertEqual([r['id'] for r in train], ['train'])
             self.assertEqual([r['id'] for r in test], ['test'])
+
+    def test_apply_policy_preserves_backup_and_rejects_duplicates(self):
+        import sqlite3
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            src = LinUCB(str(root / 'src.sqlite3'))
+            dst = LinUCB(str(root / 'dst.sqlite3'))
+            x = features(METRICS, 100, 500, 0)
+            dst.update('ai', x, 4, True, 100, 'code', 500, 100)
+            for server in ('ai', 'ai1', 'ai2'):
+                src.update(server, x, 3, True, 100, 'code', 500, 100)
+            src.db.close()
+            dst.db.close()
+            result = apply(root / 'src.sqlite3', root / 'dst.sqlite3', root / 'backup.sqlite3', 'run1')
+            self.assertEqual(result['training_records'], 3)
+            with sqlite3.connect(root / 'backup.sqlite3') as backup:
+                self.assertEqual(backup.execute('select count(*) from outcomes').fetchone()[0], 1)
+            with sqlite3.connect(root / 'dst.sqlite3') as live:
+                self.assertEqual(live.execute('select count(*) from outcomes').fetchone()[0], 4)
+            with self.assertRaises(sqlite3.IntegrityError):
+                apply(root / 'src.sqlite3', root / 'dst.sqlite3', root / 'backup2.sqlite3', 'run1')
+            with sqlite3.connect(root / 'dst.sqlite3') as live:
+                self.assertEqual(live.execute('select count(*) from outcomes').fetchone()[0], 4)
 
 
 if __name__ == '__main__':
