@@ -45,6 +45,22 @@ class Tests(unittest.TestCase):
 
     def test_feature_includes_prediction(self):
         self.assertFalse(np.array_equal(features(METRICS, 100, 500, 0), features(METRICS, 100, 1000, 0)))
+        self.assertFalse(np.array_equal(features(METRICS, 100, 500, 0),
+                                        features(METRICS, 100, 500, 0, {'input_tokens_per_second': 1000, 'output_tokens_per_second': 50})))
+
+    def test_old_policy_dimensions_are_preserved(self):
+        with tempfile.TemporaryDirectory() as directory:
+            model = LinUCB(str(Path(directory) / 'old.sqlite3'))
+            old_a = np.eye(7) * 2
+            old_b = np.arange(7)
+            model.db.execute('insert into arms values (?,?,?,?)', ('old', json.dumps(old_a.tolist()), json.dumps(old_b.tolist()), 3))
+            model.db.commit()
+            a, b, n = model.state('old')
+            np.testing.assert_array_equal(a[:7, :7], old_a)
+            np.testing.assert_array_equal(b[:7], old_b)
+            self.assertEqual(a.shape, (11, 11))
+            self.assertEqual(n, 3)
+            model.db.close()
 
     def test_collection_rejects_wrong_model_and_failed_agent(self):
         async def check():

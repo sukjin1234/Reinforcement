@@ -36,7 +36,8 @@ class Dispatcher:
                                 continue
                             if state.active[sid] >= server.get('max_inflight', 1):
                                 continue
-                            x = features(snapshot['metrics'], input_tokens, predicted, state.active[sid])
+                            perf = state.bandit.recent_performance(sid)
+                            x = features(snapshot['metrics'], input_tokens, predicted, state.active[sid], perf)
                             eligible.append((state.bandit.score(sid, x), server, x))
                     if eligible:
                         if state.config.get('policy', 'linucb') == 'round_robin':
