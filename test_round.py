@@ -1,6 +1,7 @@
 import asyncio
 import tempfile
 import unittest
+from types import SimpleNamespace
 from unittest.mock import patch
 from pathlib import Path
 
@@ -8,6 +9,7 @@ import httpx
 import numpy as np
 from fastapi.testclient import TestClient
 import balancer
+from dispatcher import Dispatcher
 from bandit import LinUCB, features
 from monitor import collect_one
 
@@ -23,13 +25,17 @@ class Tests(unittest.TestCase):
             model = LinUCB(path)
             x = features(METRICS, 100, 500, 0)
             prior = model.score('a', x)
-            model.update('a', x, 20, True, 100, 'code', 500, 450)
+            model.update('a', x, 20, True, 100, 'code', 500, 450,
+                         prompt_count=100, prompt_duration_ns=2e9, eval_duration_ns=9e9, queue_seconds=1)
             self.assertLess(model.score('a', x), prior)
             self.assertEqual(model.state('a')[2], 1)
             model.db.close()
             reopened = LinUCB(path)
             self.assertEqual(reopened.state('a')[2], 1)
             self.assertEqual(reopened.db.execute('select actual_tokens from outcomes').fetchone()[0], 450)
+            performance = reopened.recent_performance('a')
+            self.assertEqual(performance['input_tokens_per_second'], 50)
+            self.assertEqual(performance['output_tokens_per_second'], 50)
             reopened.db.close()
 
     def test_feature_includes_prediction(self):
@@ -62,7 +68,8 @@ class Tests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             config = {'model': 'model', 'model_digest': 'digest', 'predictor_path': 'unused',
                       'state_db': str(Path(directory) / 'state.sqlite3'), 'servers': [SERVER | {'max_inflight': 1}],
-                      'poll_seconds': 60, 'max_metric_age_seconds': 10, 'request_timeout_seconds': 10}
+                      'poll_seconds': 60, 'max_metric_age_seconds': 10, 'request_timeout_seconds': 10,
+                      'queue_wait_seconds': 0.05}
             bundle = {'estimator': Estimator(), 'metadata': {'model_name': 'model', 'model_digest': 'digest',
                       'settings': {}, 'input_min': 10, 'input_max': 2000, 'categories': ['code']}}
             classifier = {'estimator': Classifier(), 'categories': ['code'], 'max_chars': 1000}
@@ -91,6 +98,67 @@ class Tests(unittest.TestCase):
                         response = client.post('/chat', json={k: v for k, v in request.items() if k != 'category'})
                     self.assertEqual(response.json()['category'], 'code')
                     self.assertEqual(response.json()['classification']['score'], 1.0)
+
+    def test_queue_fifo_full_and_cancellation(self):
+        async def check():
+            from fastapi import HTTPException
+            import time
+            with tempfile.TemporaryDirectory() as directory:
+                bandit = LinUCB(str(Path(directory) / 'queue.sqlite3'))
+                state = SimpleNamespace(lock=asyncio.Lock(), bandit=bandit,
+                    config={'servers': [SERVER | {'max_inflight': 1}], 'max_metric_age_seconds': 10,
+                            'queue_max_size': 1, 'queue_wait_seconds': 2},
+                    active={'a': 1}, status={'a': {'healthy': True, 'checked_at': time.time(), 'metrics': METRICS}})
+                q = Dispatcher(state)
+                first = asyncio.create_task(q.reserve(100, 500))
+                await asyncio.sleep(0.01)
+                self.assertEqual(len(q.waiters), 1)
+                with self.assertRaises(HTTPException) as error:
+                    await q.reserve(100, 500)
+                self.assertEqual(error.exception.status_code, 503)
+                async with q.condition:
+                    state.active['a'] = 0
+                    q.condition.notify_all()
+                server, _, delay = await first
+                self.assertEqual(server['id'], 'a')
+                self.assertGreaterEqual(delay, 0)
+                self.assertEqual(state.active['a'], 1)
+                pending = asyncio.create_task(q.reserve(100, 500))
+                await asyncio.sleep(0.01)
+                pending.cancel()
+                with self.assertRaises(asyncio.CancelledError):
+                    await pending
+                self.assertEqual(len(q.waiters), 0)
+                bandit.db.close()
+        asyncio.run(check())
+
+    def test_queue_preserves_fifo_order(self):
+        async def check():
+            import time
+            with tempfile.TemporaryDirectory() as directory:
+                bandit = LinUCB(str(Path(directory) / 'fifo.sqlite3'))
+                state = SimpleNamespace(lock=asyncio.Lock(), bandit=bandit,
+                    config={'servers': [SERVER | {'max_inflight': 1}], 'max_metric_age_seconds': 10,
+                            'queue_max_size': 3, 'queue_wait_seconds': 2},
+                    active={'a': 1}, status={'a': {'healthy': True, 'checked_at': time.time(), 'metrics': METRICS}})
+                q = Dispatcher(state)
+                first = asyncio.create_task(q.reserve(100, 500))
+                await asyncio.sleep(0.02)
+                second = asyncio.create_task(q.reserve(200, 500))
+                await asyncio.sleep(0.02)
+                self.assertEqual(len(q.waiters), 2)
+                async with q.condition:
+                    state.active['a'] = 0
+                    q.condition.notify_all()
+                await first
+                self.assertFalse(second.done())
+                async with q.condition:
+                    state.active['a'] = 0
+                    q.condition.notify_all()
+                await second
+                self.assertEqual(len(q.waiters), 0)
+                bandit.db.close()
+        asyncio.run(check())
 
 
 if __name__ == '__main__':

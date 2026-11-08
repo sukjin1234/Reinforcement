@@ -19,6 +19,8 @@ def read_config(path):
     for name in ('poll_seconds', 'max_metric_age_seconds', 'request_timeout_seconds'):
         if config[name] <= 0:
             raise ValueError(f'{name} must be positive')
+    if config.get('queue_max_size', 100) < 1 or config.get('queue_wait_seconds', 60) <= 0:
+        raise ValueError('queue capacity and wait time must be positive')
     return config
 
 

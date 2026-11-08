@@ -28,6 +28,11 @@ class LinUCB:
               predicted_tokens INTEGER NOT NULL, actual_tokens INTEGER, duration_seconds REAL NOT NULL,
               success INTEGER NOT NULL, reward REAL NOT NULL, context TEXT NOT NULL);
         ''')
+        columns = {row[1] for row in self.db.execute('PRAGMA table_info(outcomes)')}
+        for name in ('prompt_count', 'prompt_duration_ns', 'eval_duration_ns', 'queue_seconds'):
+            if name not in columns:
+                self.db.execute(f'ALTER TABLE outcomes ADD COLUMN {name} REAL')
+        self.db.commit()
 
     def state(self, server_id):
         row = self.db.execute('SELECT a,b,n FROM arms WHERE server_id=?', (server_id,)).fetchone()
@@ -40,7 +45,8 @@ class LinUCB:
         inv_x = np.linalg.solve(a, x)
         return float(b @ inv_x + self.alpha * np.sqrt(max(0, x @ inv_x)))
 
-    def update(self, server_id, x, duration, success, input_tokens, category, predicted, actual):
+    def update(self, server_id, x, duration, success, input_tokens, category, predicted, actual,
+               prompt_count=None, prompt_duration_ns=None, eval_duration_ns=None, queue_seconds=None):
         # Bounded reward prevents one timeout dominating the policy.
         reward = -min(math.log1p(max(duration, 0) / 10), 5.0) if success else -5.0
         a, b, n = self.state(server_id)
@@ -49,7 +55,20 @@ class LinUCB:
         with self.db:
             self.db.execute('INSERT OR REPLACE INTO arms VALUES (?,?,?,?)',
                             (server_id, json.dumps(a.tolist()), json.dumps(b.tolist()), n + 1))
-            self.db.execute('INSERT INTO outcomes(timestamp,server_id,input_tokens,category,predicted_tokens,actual_tokens,duration_seconds,success,reward,context) VALUES (?,?,?,?,?,?,?,?,?,?)',
+            self.db.execute('INSERT INTO outcomes(timestamp,server_id,input_tokens,category,predicted_tokens,actual_tokens,duration_seconds,success,reward,context,prompt_count,prompt_duration_ns,eval_duration_ns,queue_seconds) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)',
                             (time.time(), server_id, input_tokens, category, predicted, actual,
-                             duration, int(success), reward, json.dumps(x.tolist())))
+                             duration, int(success), reward, json.dumps(x.tolist()), prompt_count,
+                             prompt_duration_ns, eval_duration_ns, queue_seconds))
         return reward
+
+    def recent_performance(self, server_id, limit=20):
+        rows = self.db.execute('''SELECT duration_seconds, prompt_count, prompt_duration_ns,
+                   actual_tokens, eval_duration_ns FROM outcomes
+                   WHERE server_id=? AND success=1 ORDER BY id DESC LIMIT ?''', (server_id, limit)).fetchall()
+        def rate(count_idx, duration_idx):
+            valid = [(r[count_idx], r[duration_idx]) for r in rows
+                     if r[count_idx] is not None and r[duration_idx] is not None
+                     and r[count_idx] >= 0 and r[duration_idx] > 0]
+            return (sum(x for x, _ in valid) * 1e9 / sum(d for _, d in valid)) if valid else None
+        return {'samples': len(rows), 'mean_latency_seconds': sum(r[0] for r in rows) / len(rows) if rows else None,
+                'input_tokens_per_second': rate(1, 2), 'output_tokens_per_second': rate(3, 4)}

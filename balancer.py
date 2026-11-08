@@ -11,8 +11,9 @@ import joblib
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel, Field
 
-from bandit import LinUCB, features
+from bandit import LinUCB
 from category import classify
+from dispatcher import Dispatcher
 from monitor import collect_all, read_config
 
 
@@ -42,14 +43,16 @@ async def lifespan(app):
     app.state.lock = asyncio.Lock()
     app.state.active = {s['id']: 0 for s in config['servers']}
     app.state.status = {}
+    app.state.dispatcher = Dispatcher(app.state)
     app.state.client = httpx.AsyncClient(timeout=config['request_timeout_seconds'], trust_env=False)
     app.state.monitor_client = httpx.AsyncClient(timeout=3, trust_env=False)
 
     async def refresh():
         while True:
             rows = await collect_all(app.state.monitor_client, config)
-            async with app.state.lock:
+            async with app.state.dispatcher.condition:
                 app.state.status = {r['server_id']: r for r in rows}
+                app.state.dispatcher.condition.notify_all()
             await asyncio.sleep(config['poll_seconds'])
 
     task = asyncio.create_task(refresh())
@@ -79,6 +82,10 @@ async def classify_text(request: CategoryRequest):
 async def status():
     async with app.state.lock:
         return {'servers': app.state.status, 'inflight': app.state.active,
+                'queue': {'waiting': len(app.state.dispatcher.waiters),
+                          'max_size': app.state.config.get('queue_max_size', 100),
+                          'rejected': app.state.dispatcher.rejected, 'timed_out': app.state.dispatcher.timed_out},
+                'recent_performance': {s['id']: app.state.bandit.recent_performance(s['id']) for s in app.state.config['servers']},
                 'observations': {s['id']: app.state.bandit.state(s['id'])[2] for s in app.state.config['servers']}}
 
 
@@ -101,27 +108,12 @@ async def chat(request: ChatRequest):
     if not math.isfinite(predicted_float):
         raise HTTPException(500, 'Predictor returned a non-finite value')
     predicted = max(0, round(predicted_float))
-    async with state.lock:
-        eligible = []
-        for server in state.config['servers']:
-            sid = server['id']
-            snapshot = state.status.get(sid, {})
-            if not snapshot.get('healthy') or time.time() - snapshot['checked_at'] > state.config['max_metric_age_seconds']:
-                continue
-            if state.active[sid] >= server.get('max_inflight', 1):
-                continue
-            x = features(snapshot['metrics'], request.input_tokens, predicted, state.active[sid])
-            eligible.append((state.bandit.score(sid, x), server, x))
-        if not eligible:
-            raise HTTPException(503, 'No healthy server with available capacity')
-        # Stable tie breaking; confidence bonuses drive exploration once rewards arrive.
-        _, server, x = max(eligible, key=lambda item: (item[0], item[1]['id']))
-        sid = server['id']
-        state.active[sid] += 1
+    server, x, queue_seconds = await state.dispatcher.reserve(request.input_tokens, predicted)
+    sid = server['id']
     payload = {'model': state.config['model'], 'messages': request.messages,
                'stream': False, 'think': False, 'keep_alive': '30m', 'options': meta['settings']}
     started = time.monotonic()
-    success, actual = False, None
+    success, actual, prompt_count, prompt_duration, eval_duration = False, None, None, None, None
     try:
         response = await state.client.post(server['ollama_url'].rstrip('/') + '/api/chat', json=payload)
         response.raise_for_status()
@@ -129,14 +121,23 @@ async def chat(request: ChatRequest):
         if not isinstance(body, dict) or body.get('done') is not True or not isinstance(body.get('eval_count'), int):
             raise ValueError('Invalid Ollama response or missing token count')
         actual = body['eval_count']
+        prompt_count, prompt_duration, eval_duration = (body.get('prompt_eval_count'), body.get('prompt_eval_duration'), body.get('eval_duration'))
+        def positive_number(value):
+            return value if isinstance(value, (int, float)) and not isinstance(value, bool) and math.isfinite(value) and value >= 0 else None
+        prompt_count, prompt_duration, eval_duration = map(positive_number, (prompt_count, prompt_duration, eval_duration))
         success = True
         return {'server_id': sid, 'category': category, 'classification': classification, 'predicted_output_tokens': predicted,
+                'queue_seconds': queue_seconds,
                 'outside_training_range': not meta['input_min'] <= request.input_tokens <= meta['input_max'],
                 'ollama_response': body}
     except (httpx.HTTPError, ValueError) as exc:
         raise HTTPException(502, f'Upstream request failed: {type(exc).__name__}') from exc
     finally:
         duration = time.monotonic() - started
-        async with state.lock:
+        async with state.dispatcher.condition:
             state.active[sid] -= 1
-            state.bandit.update(sid, x, duration, success, request.input_tokens, category, predicted, actual)
+            try:
+                state.bandit.update(sid, x, duration + queue_seconds, success, request.input_tokens, category,
+                                    predicted, actual, prompt_count, prompt_duration, eval_duration, queue_seconds)
+            finally:
+                state.dispatcher.condition.notify_all()

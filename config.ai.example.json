@@ -7,6 +7,8 @@
   "poll_seconds": 3,
   "max_metric_age_seconds": 12,
   "request_timeout_seconds": 300,
+  "queue_max_size": 100,
+  "queue_wait_seconds": 60,
   "state_db": "round.sqlite3",
   "servers": [
     {"id": "ai", "metrics_url": "http://127.0.0.1:9109/metrics", "ollama_url": "http://127.0.0.1:11434", "max_inflight": 1}
