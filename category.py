@@ -13,4 +13,5 @@ def classify(bundle, text):
     if not math.isfinite(score):
         raise ValueError('Invalid category score')
     return {'category': str(model.classes_[index]), 'score': score,
-            'truncated': len(text) > bundle['max_chars']}
+            'truncated': len(text) > bundle['max_chars'],
+            'notice': 'Synthetic-data classifier; verify category or supply it manually. Score is not calibrated.'}
