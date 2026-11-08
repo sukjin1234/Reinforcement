@@ -115,6 +115,8 @@ class Tests(unittest.TestCase):
                     self.assertEqual(response.json()['server_id'], 'a')
                     self.assertEqual(response.json()['predicted_output_tokens'], 500)
                     self.assertEqual(client.get('/status').json()['observations']['a'], 1)
+                    self.assertEqual(client.get('/status').json()['policy'], 'linucb')
+                    self.assertTrue(client.get('/status').json()['training_enabled'])
                     self.assertEqual(balancer.app.state.active['a'], 0)
                     self.assertEqual(client.post('/chat', json={**request, 'category': 'unknown'}).status_code, 422)
                     with patch.object(balancer.app.state.client, 'post', side_effect=post):

@@ -81,7 +81,10 @@ async def classify_text(request: CategoryRequest):
 @app.get('/status')
 async def status():
     async with app.state.lock:
-        return {'servers': app.state.status, 'inflight': app.state.active,
+        return {'policy': app.state.config.get('policy', 'linucb'),
+                'training_enabled': app.state.config.get('training_enabled', True),
+                'bandit_alpha': app.state.config.get('bandit_alpha', 0.7),
+                'servers': app.state.status, 'inflight': app.state.active,
                 'queue': {'waiting': len(app.state.dispatcher.waiters),
                           'max_size': app.state.config.get('queue_max_size', 100),
                           'rejected': app.state.dispatcher.rejected, 'timed_out': app.state.dispatcher.timed_out},
