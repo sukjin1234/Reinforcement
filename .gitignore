@@ -6,3 +6,4 @@ config.json
 *.sqlite3-*
 *.joblib
 metrics.jsonl
+category_report.json

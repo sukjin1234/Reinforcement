@@ -12,13 +12,18 @@ from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel, Field
 
 from bandit import LinUCB, features
+from category import classify
 from monitor import collect_all, read_config
 
 
 class ChatRequest(BaseModel):
     input_tokens: int = Field(ge=0, strict=True)
-    category: str = Field(min_length=1)
+    category: str | None = Field(default=None, min_length=1)
     messages: list[dict] = Field(min_length=1)
+
+
+class CategoryRequest(BaseModel):
+    text: str = Field(min_length=1)
 
 
 @asynccontextmanager
@@ -28,7 +33,11 @@ async def lifespan(app):
     meta = bundle['metadata']
     if meta.get('model_digest') != config['model_digest'] or meta.get('model_name') != config['model']:
         raise RuntimeError('Predictor model metadata does not match configured model/digest')
+    classifier = joblib.load(config.get('category_model_path', 'category_model.joblib'))
+    if set(classifier['categories']) != set(meta['categories']):
+        raise RuntimeError('Classifier and token predictor categories do not match')
     app.state.config, app.state.bundle = config, bundle
+    app.state.classifier = classifier
     app.state.bandit = LinUCB(config['state_db'])
     app.state.lock = asyncio.Lock()
     app.state.active = {s['id']: 0 for s in config['servers']}
@@ -58,6 +67,14 @@ async def lifespan(app):
 app = FastAPI(lifespan=lifespan)
 
 
+@app.post('/classify')
+async def classify_text(request: CategoryRequest):
+    try:
+        return classify(app.state.classifier, request.text)
+    except ValueError as exc:
+        raise HTTPException(422, str(exc)) from exc
+
+
 @app.get('/status')
 async def status():
     async with app.state.lock:
@@ -69,9 +86,18 @@ async def status():
 async def chat(request: ChatRequest):
     state = app.state
     meta = state.bundle['metadata']
-    if request.category not in meta['categories']:
+    classification = None
+    category = request.category
+    if category is None:
+        user_messages = [m.get('content') for m in request.messages if m.get('role') == 'user']
+        try:
+            classification = classify(state.classifier, user_messages[-1] if user_messages else None)
+        except ValueError as exc:
+            raise HTTPException(422, str(exc)) from exc
+        category = classification['category']
+    if category not in meta['categories']:
         raise HTTPException(422, 'Unknown category. Use a category from the predictor training data.')
-    predicted_float = float(state.bundle['estimator'].predict([[request.input_tokens, request.category]])[0])
+    predicted_float = float(state.bundle['estimator'].predict([[request.input_tokens, category]])[0])
     if not math.isfinite(predicted_float):
         raise HTTPException(500, 'Predictor returned a non-finite value')
     predicted = max(0, round(predicted_float))
@@ -104,7 +130,7 @@ async def chat(request: ChatRequest):
             raise ValueError('Invalid Ollama response or missing token count')
         actual = body['eval_count']
         success = True
-        return {'server_id': sid, 'predicted_output_tokens': predicted,
+        return {'server_id': sid, 'category': category, 'classification': classification, 'predicted_output_tokens': predicted,
                 'outside_training_range': not meta['input_min'] <= request.input_tokens <= meta['input_max'],
                 'ollama_response': body}
     except (httpx.HTTPError, ValueError) as exc:
@@ -113,4 +139,4 @@ async def chat(request: ChatRequest):
         duration = time.monotonic() - started
         async with state.lock:
             state.active[sid] -= 1
-            state.bandit.update(sid, x, duration, success, request.input_tokens, request.category, predicted, actual)
+            state.bandit.update(sid, x, duration, success, request.input_tokens, category, predicted, actual)

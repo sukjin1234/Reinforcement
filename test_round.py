@@ -55,16 +55,25 @@ class Tests(unittest.TestCase):
         class Estimator:
             def predict(self, values):
                 return [500]
+        class Classifier:
+            classes_ = np.array(['code'])
+            def predict_proba(self, values):
+                return np.array([[1.0]])
         with tempfile.TemporaryDirectory() as directory:
             config = {'model': 'model', 'model_digest': 'digest', 'predictor_path': 'unused',
                       'state_db': str(Path(directory) / 'state.sqlite3'), 'servers': [SERVER | {'max_inflight': 1}],
                       'poll_seconds': 60, 'max_metric_age_seconds': 10, 'request_timeout_seconds': 10}
             bundle = {'estimator': Estimator(), 'metadata': {'model_name': 'model', 'model_digest': 'digest',
                       'settings': {}, 'input_min': 10, 'input_max': 2000, 'categories': ['code']}}
+            classifier = {'estimator': Classifier(), 'categories': ['code'], 'max_chars': 1000}
             async def collected(*args):
                 return [{'server_id': 'a', 'healthy': False, 'checked_at': __import__('time').time()}]
-            with patch.object(balancer, 'read_config', return_value=config), patch.object(balancer.joblib, 'load', return_value=bundle), patch.object(balancer, 'collect_all', collected):
+            def load_model(path):
+                return bundle if path == 'unused' else classifier
+            with patch.object(balancer, 'read_config', return_value=config), patch.object(balancer.joblib, 'load', side_effect=load_model), patch.object(balancer, 'collect_all', collected):
                 with TestClient(balancer.app) as client:
+                    self.assertEqual(client.post('/classify', json={'text': 'write code'}).json()['category'], 'code')
+                    self.assertEqual(client.post('/classify', json={'text': '  '}).status_code, 422)
                     request = {'input_tokens': 100, 'category': 'code', 'messages': [{'role': 'user', 'content': 'hello'}]}
                     self.assertEqual(client.post('/chat', json=request).status_code, 503)
                     balancer.app.state.status = {'a': {'healthy': True, 'checked_at': __import__('time').time(), 'metrics': METRICS}}
@@ -78,6 +87,10 @@ class Tests(unittest.TestCase):
                     self.assertEqual(client.get('/status').json()['observations']['a'], 1)
                     self.assertEqual(balancer.app.state.active['a'], 0)
                     self.assertEqual(client.post('/chat', json={**request, 'category': 'unknown'}).status_code, 422)
+                    with patch.object(balancer.app.state.client, 'post', side_effect=post):
+                        response = client.post('/chat', json={k: v for k, v in request.items() if k != 'category'})
+                    self.assertEqual(response.json()['category'], 'code')
+                    self.assertEqual(response.json()['classification']['score'], 1.0)
 
 
 if __name__ == '__main__':

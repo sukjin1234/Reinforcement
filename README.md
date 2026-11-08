@@ -25,10 +25,22 @@ nohup "$PY" -m uvicorn balancer:app --host 127.0.0.1 --port 8008 > balancer.log 
 ```bash
 curl -s http://127.0.0.1:8008/chat \
   -H 'Content-Type: application/json' \
-  -d '{"input_tokens":38,"category":"explain","messages":[{"role":"user","content":"Reply with one word: hello."}]}'
+  -d '{"input_tokens":38,"messages":[{"role":"user","content":"Reply with one word: hello."}]}'
 ```
 
-위 38은 동작 확인을 위한 예시입니다. 실사용 시 **Qwen/Ollama의 채팅 템플릿을 포함한 실제 입력 토큰 수**와 요청에 맞는 학습된 질문 유형을 호출자가 제공해야 합니다. 두 값은 자동 산출하지 않습니다. 정확하지 않으면 예측과 서버 선택도 부정확해집니다. 응답에는 선택된 서버, 예측값, 학습 범위 밖 여부, Ollama 응답과 실제 토큰 수가 포함됩니다. 유형 목록은 기존 예측 모델의 README를 참고하세요.
+위 38은 동작 확인을 위한 예시입니다. 실사용 시 **Qwen/Ollama의 채팅 템플릿을 포함한 실제 입력 토큰 수**를 호출자가 제공해야 합니다. 토큰 수는 자동 산출하지 않습니다. 질문 유형을 생략하면 마지막 사용자 메시지에서 자동 분류합니다. `category`를 직접 지정하면 해당 유형을 사용합니다. 응답에는 선택된 유형, 자동 분류 점수, 선택된 서버, 예측값, 학습 범위 밖 여부, Ollama 응답과 실제 토큰 수가 포함됩니다. 유형 목록은 기존 예측 모델의 README를 참고하세요.
+
+분류 결과만 확인하려면 `POST /classify`에 `{"text":"요약해줘"}`를 전달합니다. 분류기는 첫 1,000자만 사용하며 여러 작업이 섞인 질문에 단일 유형을 출력합니다. 점수는 보정된 확률이나 정확도 보증이 아닙니다. 10만 개의 합성 템플릿 질문으로 학습했으므로 실제 사용자 질문에서 오류가 날 수 있습니다. 불확실한 결과는 `category`를 수동 지정하세요.
+
+분류기 학습 및 검증:
+
+```bash
+cd ~/round
+~/qwen3_8b_100k_questions_bundle/.token_predict_venv/bin/python train_category.py \
+  --data ~/qwen3_8b_100k_questions_bundle/questions_100000.jsonl
+```
+
+문자 단위 TF-IDF와 선형 분류기를 사용합니다. 평가 데이터는 주제 영역을 분리하지만 템플릿 자체는 겹칠 수 있습니다. `category_report.json`에 평가를 저장한 후 전체 데이터로 분류기를 재학습합니다. `category_model.joblib`은 동일한 Python·scikit-learn 환경에서 사용하고 신뢰할 수 있는 파일만 불러오세요.
 
 실제 요청은 `/api/chat`으로 전달하며, 수집 당시와 같은 설정(`think=false`, `stream=false`, 학습 모델의 `num_ctx`, `num_predict`, `temperature`, `top_p`, `seed`)을 사용합니다. 스트리밍은 지원하지 않습니다. 프롬프트와 답변은 로드밸런서의 SQLite에 저장하지 않습니다. 성공한 응답의 실제 출력 토큰, 처리 시간, 서버, 예측값 및 실패 여부는 `round.sqlite3`에 남습니다.
 
