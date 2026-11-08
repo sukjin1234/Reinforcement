@@ -1,5 +1,6 @@
 """Import an evaluated experiment's learned policy into a stopped router DB."""
 import argparse
+from contextlib import closing
 import json
 import sqlite3
 from pathlib import Path
@@ -12,7 +13,7 @@ def apply(source_path, target_path, backup_path, run_id):
         raise ValueError('Source and target must exist and backup must be new')
     if len({p.resolve() for p in (source_path, target_path, backup_path)}) != 3:
         raise ValueError('Source, target and backup must be different files')
-    with sqlite3.connect(source_path) as source, sqlite3.connect(target_path) as target:
+    with closing(sqlite3.connect(source_path)) as source, closing(sqlite3.connect(target_path)) as target:
         arms = source.execute('select server_id,a,b,n from arms').fetchall()
         if {r[0] for r in arms} != {'ai', 'ai1', 'ai2'}:
             raise ValueError('Expected trained policy for each of ai, ai1, ai2')
@@ -26,7 +27,7 @@ def apply(source_path, target_path, backup_path, run_id):
         records = source.execute('SELECT ' + ','.join(columns) + ' FROM outcomes ORDER BY id').fetchall()
         if not records or any(not r[7] for r in records):
             raise ValueError('Training records are absent or include failures')
-        with sqlite3.connect(backup_path) as backup:
+        with closing(sqlite3.connect(backup_path)) as backup:
             target.backup(backup)
         with target:
             target.execute('CREATE TABLE IF NOT EXISTS policy_deployments (run_id TEXT PRIMARY KEY, applied_at TEXT DEFAULT CURRENT_TIMESTAMP)')

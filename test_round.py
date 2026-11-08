@@ -2,6 +2,7 @@ import asyncio
 import json
 import tempfile
 import unittest
+from contextlib import closing
 from types import SimpleNamespace
 from unittest.mock import patch
 from pathlib import Path
@@ -231,13 +232,13 @@ class Tests(unittest.TestCase):
             dst.db.close()
             result = apply(root / 'src.sqlite3', root / 'dst.sqlite3', root / 'backup.sqlite3', 'run1')
             self.assertEqual(result['training_records'], 3)
-            with sqlite3.connect(root / 'backup.sqlite3') as backup:
+            with closing(sqlite3.connect(root / 'backup.sqlite3')) as backup:
                 self.assertEqual(backup.execute('select count(*) from outcomes').fetchone()[0], 1)
-            with sqlite3.connect(root / 'dst.sqlite3') as live:
+            with closing(sqlite3.connect(root / 'dst.sqlite3')) as live:
                 self.assertEqual(live.execute('select count(*) from outcomes').fetchone()[0], 4)
             with self.assertRaises(sqlite3.IntegrityError):
                 apply(root / 'src.sqlite3', root / 'dst.sqlite3', root / 'backup2.sqlite3', 'run1')
-            with sqlite3.connect(root / 'dst.sqlite3') as live:
+            with closing(sqlite3.connect(root / 'dst.sqlite3')) as live:
                 self.assertEqual(live.execute('select count(*) from outcomes').fetchone()[0], 4)
 
 
