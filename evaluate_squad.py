@@ -42,11 +42,25 @@ async def main():
     seed_db = out / 'seed.sqlite3'
     copy_database(config['state_db'], seed_db)
     seed_model = LinUCB(str(seed_db), alpha=0)
-    for row in calibration.values():
-        seed_model.update(row['server_id'], np.zeros(DIM), row['elapsed_seconds'], True, row['input_tokens'],
-                          row['category'], row['predicted_tokens'], row['output_tokens'], row.get('input_tokens'),
-                          row.get('prompt_eval_duration'), row.get('eval_duration'), 0, learn=False,
-                          prompt_cached_count=row.get('prompt_eval_cached_count'))
+    async def warmup():
+        async with httpx.AsyncClient(timeout=300, trust_env=False) as client:
+            async def one(server):
+                text = 'Reply with one sentence about networks. Context identifiers: ' + ' '.join(str(i * 173 + 11) for i in range(80))
+                payload = {'model': config['model'], 'messages': [{'role': 'user', 'content': text}],
+                           'stream': False, 'think': False, 'keep_alive': '30m',
+                           'options': {'num_ctx': 16384, 'num_predict': 8, 'temperature': .7, 'top_p': .9, 'seed': 42}}
+                started = time.monotonic()
+                response = await client.post(server['ollama_url'].rstrip('/') + '/api/chat', json=payload)
+                response.raise_for_status()
+                return server['id'], response.json(), time.monotonic() - started
+            return await asyncio.gather(*(one(s) for s in config['servers']))
+
+    # Independent warmup prompts provide initial speed observations. Never seed
+    # them with the outputs of the questions being evaluated.
+    for sid, row, elapsed in await warmup():
+        seed_model.update(sid, np.zeros(DIM), elapsed, True, row['prompt_eval_count'], 'explain',
+                          8, row['eval_count'], row.get('prompt_eval_count'), row.get('prompt_eval_duration'),
+                          row.get('eval_duration'), 0, learn=False, prompt_cached_count=row.get('prompt_eval_cached_count'))
     seed_model.db.close()
     policies = ['linucb', 'round_robin', 'shortest_predicted']
     rng = random.Random(args.seed)
@@ -57,6 +71,8 @@ async def main():
         schedule.extend((repeat, name) for name in order)
     results = []
     for repeat, policy in schedule:
+        # Restore the same model warmup prompt after the preceding policy run.
+        await warmup()
         phase = f'{repeat + 1}_{policy}'
         phase_db = out / (phase + '.sqlite3')
         copy_database(seed_db, phase_db)
@@ -138,7 +154,7 @@ async def main():
               'source_sha256': manifest['data_sha256'], 'sample_count': len(manifest['questions']),
               'sampling': manifest['sampling'], 'seed': args.seed, 'batch_size': args.batch_size,
               'policy_order': schedule, 'runs': results,
-              'limitations': 'English reading-comprehension dataset, artificial response-length instructions, only 24 examples and 2 repeats. Original output-token count measured beforehand and replays may differ. All policies are frozen; streaming and automatic category classification used. TTFT is first nonempty content chunk, not necessarily one token.'}
+              'limitations': 'English reading-comprehension dataset, artificial response-length instructions, only 24 examples and 2 repeats. Input token count measured beforehand by replay; evaluation output lengths were not used to seed rates. All policies are frozen; streaming and automatic category classification used. TTFT is first nonempty content chunk, not necessarily one token. Cache effects may remain.'}
     (out / 'report.json').write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding='utf-8')
     print(json.dumps(report, ensure_ascii=False, indent=2), flush=True)
 

@@ -14,7 +14,7 @@ MODEL = 'qwen3:8b-q4_K_M'
 EXPECTED_DIGEST = '500a1f067a9f782620b40bee6f7b0c89e17ae61f686b92c24933e4ca4b2b8b41'
 
 
-async def phase(parallel, output_dir, port):
+async def phase(parallel, output_dir, port, repeats):
     address = f'http://127.0.0.1:{port}'
     with socket.socket() as sock:
         if sock.connect_ex(('127.0.0.1', port)) == 0:
@@ -42,12 +42,15 @@ async def phase(parallel, output_dir, port):
             options = {'num_ctx': 16384, 'num_predict': 256, 'temperature': .7, 'top_p': .9, 'seed': 42}
             warm = {'model': MODEL, 'messages': [{'role': 'user', 'content': 'Say hello.'}],
                     'think': False, 'stream': False, 'keep_alive': '5m', 'options': {**options, 'num_predict': 8}}
-            r = await client.post(address + '/api/chat', json=warm)
-            r.raise_for_status()
+            # Warm the concurrent path as well as model loading, before timing.
+            warm_responses = await asyncio.gather(*(client.post(address + '/api/chat', json={**warm,
+                'messages': [{'role': 'user', 'content': f'Say hello. Warmup {i}.'}]}) for i in range(2)))
+            for r in warm_responses:
+                r.raise_for_status()
 
-            async def send(index):
+            async def send(index, repeat):
                 payload = {'model': MODEL, 'messages': [{'role': 'user', 'content':
-                           f'Explain how computer networks work in about 100 words. Request {index}.'}],
+                           f'Explain how computer networks work in about 100 words. Round {repeat}, request {index}.'}],
                            'think': False, 'stream': True, 'keep_alive': '5m', 'options': options}
                 started = time.monotonic()
                 first, done = None, None
@@ -69,14 +72,18 @@ async def phase(parallel, output_dir, port):
                 return {'ttft_seconds': first, 'latency_seconds': time.monotonic() - started,
                         'actual_output_tokens': done.get('eval_count')}
 
-            start = time.monotonic()
-            tasks = [asyncio.create_task(send(i)) for i in range(2)]
-            # The API reports loaded models and memory, not per-request progress.
-            await asyncio.sleep(.1)
-            ps = (await client.get(address + '/api/ps')).json()
-            rows = await asyncio.gather(*tasks)
-            return {'parallel': parallel, 'total_elapsed_seconds': time.monotonic() - start,
-                    'requests': rows, 'api_ps_fields': sorted(ps.get('models', [{}])[0].keys()) if ps.get('models') else []}
+            rounds = []
+            fields = []
+            for repeat in range(repeats):
+                start = time.monotonic()
+                tasks = [asyncio.create_task(send(i, repeat)) for i in range(2)]
+                # The API reports loaded models and memory, not per-request progress.
+                await asyncio.sleep(.1)
+                ps = (await client.get(address + '/api/ps')).json()
+                fields = sorted(ps.get('models', [{}])[0].keys()) if ps.get('models') else []
+                rows = await asyncio.gather(*tasks)
+                rounds.append({'total_elapsed_seconds': time.monotonic() - start, 'requests': rows})
+            return {'parallel': parallel, 'rounds': rounds, 'api_ps_fields': fields}
     finally:
         proc.terminate()
         try:
@@ -90,12 +97,15 @@ async def main():
     p = argparse.ArgumentParser()
     p.add_argument('--output', required=True)
     p.add_argument('--port', type=int, default=11435)
+    p.add_argument('--repeats', type=int, default=3)
     args = p.parse_args()
     path = Path(args.output)
     path.mkdir(parents=True, exist_ok=False)
-    result = {'warning': 'One host, two synthetic prompts, warm model, single run per setting. Separate local process; system service settings unchanged.', 'phases': []}
+    if args.repeats < 1:
+        p.error('repeats must be positive')
+    result = {'warning': 'One host, two synthetic prompts, fixed 1-then-2 order, warm concurrent path. Separate local process; system service settings unchanged.', 'phases': []}
     for n in (1, 2):
-        result['phases'].append(await phase(n, path, args.port))
+        result['phases'].append(await phase(n, path, args.port, args.repeats))
         (path / 'report.json').write_text(json.dumps(result, ensure_ascii=False, indent=2), encoding='utf-8')
         print('parallel', n, 'complete', flush=True)
     print(json.dumps(result, ensure_ascii=False, indent=2), flush=True)
