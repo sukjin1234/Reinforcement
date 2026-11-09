@@ -15,6 +15,9 @@ from category import classify
 
 
 async def run(args):
+    output, report_path = Path(args.output), Path(args.report)
+    if output.exists() or report_path.exists():
+        raise FileExistsError('Refusing to overwrite calibration output or report')
     manifest = json.loads(Path(args.manifest).read_text(encoding='utf-8'))
     config = json.loads(Path(args.config).read_text(encoding='utf-8'))
     predictor = joblib.load(config['predictor_path'])
@@ -49,10 +52,8 @@ async def run(args):
                 print('calibrated', index + 1, '/', len(manifest['questions']), row['status'], flush=True)
                 return row
         rows = await asyncio.gather(*(send(i, item) for i, item in enumerate(manifest['questions'])))
-    output = Path(args.output)
-    if output.exists():
-        raise FileExistsError('Refusing to overwrite calibration results')
-    output.write_text(''.join(json.dumps(row, ensure_ascii=False) + '\n' for row in rows), encoding='utf-8')
+    with output.open('x', encoding='utf-8') as f:
+        f.write(''.join(json.dumps(row, ensure_ascii=False) + '\n' for row in rows))
     valid = [r for r in rows if r['status'] == 'ok' and r['done_reason'] == 'stop']
     def true_bucket(n): return int(np.searchsorted(bucket_model['bounds'], n, side='right'))
     bucket_counts = collections.Counter(bucket_model['labels'][true_bucket(r['output_tokens'])] for r in valid)
@@ -65,7 +66,8 @@ async def run(args):
               'majority_bucket_accuracy': max(bucket_counts.values()) / len(valid) if valid else None,
               'under_bucket_rate': float(np.mean([bucket_model['labels'].index(r['bucket_prediction']['bucket']) < true_bucket(r['output_tokens']) for r in valid])) if valid else None,
               'warning': '24 human-authored English SQuAD questions with synthetic style wrappers, not Korean production traffic; automatic category is not ground-truth verified.'}
-    Path(args.report).write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding='utf-8')
+    with report_path.open('x', encoding='utf-8') as f:
+        f.write(json.dumps(report, ensure_ascii=False, indent=2))
     print(json.dumps(report, ensure_ascii=False, indent=2))
 
 

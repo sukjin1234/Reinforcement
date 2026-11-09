@@ -1,0 +1,159 @@
+{
+  "source": "SQuAD v2 development set; human-written English reading-comprehension questions",
+  "source_url": "https://rajpurkar.github.io/SQuAD-explorer/dataset/dev-v2.0.json",
+  "source_license": "CC BY-SA 4.0",
+  "source_sha256": "80a5225e94905956a6446d296ca1093975c4d3b3260f1d6c8f68bc2ab77182d8",
+  "sample_count": 24,
+  "sampling": "one answerable question per distinct article; artificial answer-style instructions",
+  "seed": 42,
+  "batch_size": 6,
+  "policy_order": [
+    [
+      0,
+      "round_robin"
+    ],
+    [
+      0,
+      "linucb"
+    ],
+    [
+      0,
+      "shortest_predicted"
+    ],
+    [
+      1,
+      "shortest_predicted"
+    ],
+    [
+      1,
+      "round_robin"
+    ],
+    [
+      1,
+      "linucb"
+    ]
+  ],
+  "runs": [
+    {
+      "requests": 24,
+      "successes": 24,
+      "failures": 0,
+      "elapsed_seconds": 16.061216824047733,
+      "throughput_requests_per_second": 1.4942827970584325,
+      "mean_latency_seconds": 2.181039939622375,
+      "median_latency_seconds": 1.6800587065226864,
+      "p95_latency_seconds": 4.530238753010053,
+      "mean_queue_seconds": 0.5705342465929183,
+      "servers": {
+        "ai": 7,
+        "ai1": 8,
+        "ai2": 9
+      },
+      "policy": "round_robin",
+      "repeat": 1,
+      "mean_ttft_seconds": 0.6645240999641828,
+      "input_count_mismatches": 0
+    },
+    {
+      "requests": 24,
+      "successes": 24,
+      "failures": 0,
+      "elapsed_seconds": 16.196114518039394,
+      "throughput_requests_per_second": 1.4818368920069416,
+      "mean_latency_seconds": 2.202875764128597,
+      "median_latency_seconds": 1.7067273244902026,
+      "p95_latency_seconds": 4.689408750040457,
+      "mean_queue_seconds": 0.5756703995769689,
+      "servers": {
+        "ai": 7,
+        "ai1": 7,
+        "ai2": 10
+      },
+      "policy": "linucb",
+      "repeat": 1,
+      "mean_ttft_seconds": 0.6728624520255835,
+      "input_count_mismatches": 0
+    },
+    {
+      "requests": 24,
+      "successes": 24,
+      "failures": 0,
+      "elapsed_seconds": 16.176896643009968,
+      "throughput_requests_per_second": 1.4835972887525612,
+      "mean_latency_seconds": 2.189039347877648,
+      "median_latency_seconds": 1.6919616009981837,
+      "p95_latency_seconds": 4.684113822993822,
+      "mean_queue_seconds": 0.572510993037819,
+      "servers": {
+        "ai": 9,
+        "ai1": 9,
+        "ai2": 6
+      },
+      "policy": "shortest_predicted",
+      "repeat": 1,
+      "mean_ttft_seconds": 0.6688308079513566,
+      "input_count_mismatches": 0
+    },
+    {
+      "requests": 24,
+      "successes": 24,
+      "failures": 0,
+      "elapsed_seconds": 15.693965334969107,
+      "throughput_requests_per_second": 1.5292502237483274,
+      "mean_latency_seconds": 1.939375692452207,
+      "median_latency_seconds": 1.5552309805061668,
+      "p95_latency_seconds": 4.096689286001492,
+      "mean_queue_seconds": 0.3573048687079184,
+      "servers": {
+        "ai": 8,
+        "ai1": 6,
+        "ai2": 10
+      },
+      "policy": "shortest_predicted",
+      "repeat": 2,
+      "mean_ttft_seconds": 0.4541873122895292,
+      "input_count_mismatches": 0
+    },
+    {
+      "requests": 24,
+      "successes": 24,
+      "failures": 0,
+      "elapsed_seconds": 16.29751191503601,
+      "throughput_requests_per_second": 1.4726174231452904,
+      "mean_latency_seconds": 1.9789265590006835,
+      "median_latency_seconds": 1.4865262935054488,
+      "p95_latency_seconds": 4.381872348021716,
+      "mean_queue_seconds": 0.35591729191461735,
+      "servers": {
+        "ai": 7,
+        "ai1": 9,
+        "ai2": 8
+      },
+      "policy": "round_robin",
+      "repeat": 2,
+      "mean_ttft_seconds": 0.45295225365892594,
+      "input_count_mismatches": 0
+    },
+    {
+      "requests": 24,
+      "successes": 24,
+      "failures": 0,
+      "elapsed_seconds": 16.558310139982495,
+      "throughput_requests_per_second": 1.4494232682626496,
+      "mean_latency_seconds": 1.9552944056680037,
+      "median_latency_seconds": 1.5716433310008142,
+      "p95_latency_seconds": 4.088513849012088,
+      "mean_queue_seconds": 0.3644190259583411,
+      "servers": {
+        "ai": 9,
+        "ai1": 8,
+        "ai2": 7
+      },
+      "policy": "linucb",
+      "repeat": 2,
+      "mean_ttft_seconds": 0.4609582218351231,
+      "input_count_mismatches": 0
+    }
+  ],
+  "limitations": "English reading-comprehension dataset, artificial response-length instructions, only 24 examples and 2 repeats. Input token count measured beforehand by replay; evaluation output lengths were not used to seed rates. All policies are frozen; streaming and automatic category classification used. TTFT is first nonempty content chunk, not necessarily one token. Cache effects may remain."
+}

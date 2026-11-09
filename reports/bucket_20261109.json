@@ -1,0 +1,223 @@
+{
+  "bounds": [
+    256,
+    768,
+    1536
+  ],
+  "labels": [
+    "0-255",
+    "256-767",
+    "768-1535",
+    "1536+"
+  ],
+  "chosen_by_validation_accuracy": "text_tokens_category",
+  "rows": {
+    "train": 7237,
+    "validation": 774,
+    "test": 1966
+  },
+  "validation_domains": [
+    "공공·환경"
+  ],
+  "test_domains": [
+    "경제·경영",
+    "학교·교육"
+  ],
+  "validation": {
+    "majority": {
+      "accuracy": 0.38372093023255816,
+      "balanced_accuracy": 0.25,
+      "macro_f1": 0.13865546218487396,
+      "under_bucket_rate": 0.19121447028423771,
+      "confusion_matrix": [
+        [
+          0,
+          0,
+          173,
+          0
+        ],
+        [
+          0,
+          0,
+          156,
+          0
+        ],
+        [
+          0,
+          0,
+          297,
+          0
+        ],
+        [
+          0,
+          0,
+          148,
+          0
+        ]
+      ]
+    },
+    "tokens_category": {
+      "accuracy": 0.41214470284237725,
+      "balanced_accuracy": 0.33167041693053256,
+      "macro_f1": 0.29923248651777234,
+      "under_bucket_rate": 0.19121447028423771,
+      "confusion_matrix": [
+        [
+          1,
+          40,
+          123,
+          9
+        ],
+        [
+          3,
+          41,
+          106,
+          6
+        ],
+        [
+          6,
+          28,
+          240,
+          23
+        ],
+        [
+          0,
+          5,
+          106,
+          37
+        ]
+      ]
+    },
+    "text_tokens_category": {
+      "accuracy": 0.7222222222222222,
+      "balanced_accuracy": 0.723160597438054,
+      "macro_f1": 0.7250110432167439,
+      "under_bucket_rate": 0.082687338501292,
+      "confusion_matrix": [
+        [
+          151,
+          20,
+          1,
+          1
+        ],
+        [
+          6,
+          92,
+          53,
+          5
+        ],
+        [
+          1,
+          17,
+          208,
+          71
+        ],
+        [
+          0,
+          1,
+          39,
+          108
+        ]
+      ]
+    }
+  },
+  "test": {
+    "majority": {
+      "accuracy": 0.3748728382502543,
+      "balanced_accuracy": 0.25,
+      "macro_f1": 0.13633000369959306,
+      "under_bucket_rate": 0.23397761953204477,
+      "confusion_matrix": [
+        [
+          0,
+          0,
+          414,
+          0
+        ],
+        [
+          0,
+          0,
+          355,
+          0
+        ],
+        [
+          0,
+          0,
+          737,
+          0
+        ],
+        [
+          0,
+          0,
+          460,
+          0
+        ]
+      ]
+    },
+    "tokens_category": {
+      "accuracy": 0.42878942014242116,
+      "balanced_accuracy": 0.352130281805543,
+      "macro_f1": 0.3369252443862735,
+      "under_bucket_rate": 0.20651068158697863,
+      "confusion_matrix": [
+        [
+          37,
+          83,
+          256,
+          38
+        ],
+        [
+          22,
+          75,
+          238,
+          20
+        ],
+        [
+          11,
+          55,
+          589,
+          82
+        ],
+        [
+          2,
+          15,
+          301,
+          142
+        ]
+      ]
+    },
+    "text_tokens_category": {
+      "accuracy": 0.7202441505595117,
+      "balanced_accuracy": 0.7218362759492079,
+      "macro_f1": 0.7266808331784177,
+      "under_bucket_rate": 0.09003051881993897,
+      "confusion_matrix": [
+        [
+          354,
+          44,
+          8,
+          8
+        ],
+        [
+          15,
+          208,
+          114,
+          18
+        ],
+        [
+          1,
+          53,
+          502,
+          181
+        ],
+        [
+          0,
+          2,
+          106,
+          352
+        ]
+      ]
+    }
+  },
+  "limitations": "Generated synthetic templates can overlap across domains. True category is used; real-world generalization and automatic category errors are not measured. Outputs stopped by length are excluded."
+}

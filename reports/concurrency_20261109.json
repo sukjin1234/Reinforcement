@@ -1,0 +1,127 @@
+{
+  "warning": "One host, two synthetic prompts, fixed 1-then-2 order, warm concurrent path. Separate local process; system service settings unchanged.",
+  "phases": [
+    {
+      "parallel": 1,
+      "rounds": [
+        {
+          "total_elapsed_seconds": 2.3549318830046104,
+          "requests": [
+            {
+              "ttft_seconds": 0.031991148003726266,
+              "latency_seconds": 1.2341324290027842,
+              "actual_output_tokens": 104
+            },
+            {
+              "ttft_seconds": 1.2699150039989036,
+              "latency_seconds": 2.3544517639966216,
+              "actual_output_tokens": 94
+            }
+          ]
+        },
+        {
+          "total_elapsed_seconds": 2.22105410900258,
+          "requests": [
+            {
+              "ttft_seconds": 0.03984439300256781,
+              "latency_seconds": 1.0779730229987763,
+              "actual_output_tokens": 90
+            },
+            {
+              "ttft_seconds": 1.111951531995146,
+              "latency_seconds": 2.220573468999646,
+              "actual_output_tokens": 96
+            }
+          ]
+        },
+        {
+          "total_elapsed_seconds": 2.505477195001731,
+          "requests": [
+            {
+              "ttft_seconds": 0.039106067997636274,
+              "latency_seconds": 1.172658658993896,
+              "actual_output_tokens": 98
+            },
+            {
+              "ttft_seconds": 1.2079476340004476,
+              "latency_seconds": 2.504971704998752,
+              "actual_output_tokens": 112
+            }
+          ]
+        }
+      ],
+      "api_ps_fields": [
+        "context_length",
+        "details",
+        "digest",
+        "expires_at",
+        "model",
+        "name",
+        "runner",
+        "size",
+        "size_vram"
+      ]
+    },
+    {
+      "parallel": 2,
+      "rounds": [
+        {
+          "total_elapsed_seconds": 1.36239797899907,
+          "requests": [
+            {
+              "ttft_seconds": 0.04455349400086561,
+              "latency_seconds": 1.3623189270001603,
+              "actual_output_tokens": 104
+            },
+            {
+              "ttft_seconds": 0.04527014800260076,
+              "latency_seconds": 1.2300216520015965,
+              "actual_output_tokens": 93
+            }
+          ]
+        },
+        {
+          "total_elapsed_seconds": 1.47897146899777,
+          "requests": [
+            {
+              "ttft_seconds": 0.05729691099986667,
+              "latency_seconds": 1.3347888530042837,
+              "actual_output_tokens": 100
+            },
+            {
+              "ttft_seconds": 0.057177089001925196,
+              "latency_seconds": 1.478470299000037,
+              "actual_output_tokens": 112
+            }
+          ]
+        },
+        {
+          "total_elapsed_seconds": 1.3515772150058183,
+          "requests": [
+            {
+              "ttft_seconds": 0.0576635580000584,
+              "latency_seconds": 1.2307670360023621,
+              "actual_output_tokens": 92
+            },
+            {
+              "ttft_seconds": 0.057549116005247924,
+              "latency_seconds": 1.3510857960063731,
+              "actual_output_tokens": 102
+            }
+          ]
+        }
+      ],
+      "api_ps_fields": [
+        "context_length",
+        "details",
+        "digest",
+        "expires_at",
+        "model",
+        "name",
+        "runner",
+        "size",
+        "size_vram"
+      ]
+    }
+  ]
+}

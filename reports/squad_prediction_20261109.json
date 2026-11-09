@@ -1,0 +1,16 @@
+{
+  "source": "SQuAD v2 development set; human-written English reading-comprehension questions",
+  "count": 24,
+  "valid": 24,
+  "censored": 0,
+  "errors": 0,
+  "token_mae": 640.4166666666666,
+  "bucket_accuracy": 0.625,
+  "actual_bucket_counts": {
+    "0-255": 17,
+    "256-767": 7
+  },
+  "majority_bucket_accuracy": 0.7083333333333334,
+  "under_bucket_rate": 0.125,
+  "warning": "24 human-authored English SQuAD questions with synthetic style wrappers, not Korean production traffic; automatic category is not ground-truth verified."
+}
