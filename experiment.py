@@ -91,13 +91,13 @@ async def run_phase(base, run_dir, config, name, tasks, batch_size, port):
                 start = time.monotonic()
                 record = {'id': item['id'], 'domain': item['domain'], 'category': item['category'], 'success': False}
                 try:
-                    r = await client.post(address + '/chat', json={'input_tokens': item['input_tokens'], 'category': item['category'],
+                    r = await client.post(address + '/chat', json={'category': item['category'],
                                                                   'messages': [{'role': 'user', 'content': item['prompt']}]})
                     r.raise_for_status()
                     data = r.json()
                     record.update(success=True, server=data['server_id'], queue_seconds=data['queue_seconds'],
                                   predicted_output_tokens=data['predicted_output_tokens'],
-                                  actual_output_tokens=data['ollama_response']['eval_count'])
+                                  actual_output_tokens=data['vllm_response']['usage']['completion_tokens'])
                 except (httpx.HTTPError, KeyError, ValueError) as exc:
                     record['error'] = type(exc).__name__
                 record['latency_seconds'] = time.monotonic() - start
@@ -124,7 +124,7 @@ async def main():
     p = argparse.ArgumentParser()
     p.add_argument('--questions', required=True)
     p.add_argument('--results', required=True)
-    p.add_argument('--config', default='config.json')
+    p.add_argument('--config', default='config.vllm.json')
     p.add_argument('--output', required=True, help='New directory; must not already exist')
     p.add_argument('--train-count', type=int, default=90)
     p.add_argument('--test-count', type=int, default=24)

@@ -1,4 +1,4 @@
-"""Simple per-request work estimates; these do not measure Ollama's internal queue."""
+"""Per-request work estimates; vLLM engine queue metrics are collected separately."""
 import math
 import time
 

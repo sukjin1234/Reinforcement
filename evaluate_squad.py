@@ -13,7 +13,7 @@ from pathlib import Path
 
 import httpx
 import numpy as np
-from bandit import DIM, LinUCB
+from vllm_bandit import DIM, LinUCB
 from experiment import copy_database, summary
 
 
@@ -21,7 +21,7 @@ async def main():
     p = argparse.ArgumentParser()
     p.add_argument('--manifest', required=True)
     p.add_argument('--calibration', required=True)
-    p.add_argument('--config', default='config.json')
+    p.add_argument('--config', default='config.vllm.json')
     p.add_argument('--bucket-model', default='bucket_model.joblib')
     p.add_argument('--output', required=True)
     p.add_argument('--repeats', type=int, default=2)
@@ -47,10 +47,10 @@ async def main():
             async def one(server):
                 text = 'Reply with one sentence about networks. Context identifiers: ' + ' '.join(str(i * 173 + 11) for i in range(80))
                 payload = {'model': config['model'], 'messages': [{'role': 'user', 'content': text}],
-                           'stream': False, 'think': False, 'keep_alive': '30m',
-                           'options': {'num_ctx': 16384, 'num_predict': 8, 'temperature': .7, 'top_p': .9, 'seed': 42}}
+                           'stream': False, 'chat_template_kwargs': {'enable_thinking': False},
+                           'max_tokens': 8, 'temperature': .7, 'top_p': .9, 'seed': 42}
                 started = time.monotonic()
-                response = await client.post(server['ollama_url'].rstrip('/') + '/api/chat', json=payload)
+                response = await client.post(server['vllm_url'].rstrip('/') + '/v1/chat/completions', json=payload)
                 response.raise_for_status()
                 return server['id'], response.json(), time.monotonic() - started
             return await asyncio.gather(*(one(s) for s in config['servers']))
@@ -58,9 +58,9 @@ async def main():
     # Independent warmup prompts provide initial speed observations. Never seed
     # them with the outputs of the questions being evaluated.
     for sid, row, elapsed in await warmup():
-        seed_model.update(sid, np.zeros(DIM), elapsed, True, row['prompt_eval_count'], 'explain',
-                          8, row['eval_count'], row.get('prompt_eval_count'), row.get('prompt_eval_duration'),
-                          row.get('eval_duration'), 0, learn=False, prompt_cached_count=row.get('prompt_eval_cached_count'))
+        usage = row['usage']
+        seed_model.update(sid, np.zeros(DIM), elapsed, True, usage['prompt_tokens'], 'explain',
+                          8, usage['completion_tokens'], prompt_count=usage['prompt_tokens'], queue_seconds=0, learn=False)
     seed_model.db.close()
     policies = ['linucb', 'round_robin', 'shortest_predicted']
     rng = random.Random(args.seed)
@@ -105,8 +105,7 @@ async def main():
                 async def send(item):
                     started = time.monotonic()
                     row = {'id': item['id'], 'success': False}
-                    request = {'input_tokens': calibration[item['id']]['input_tokens'],
-                               'messages': [{'role': 'user', 'content': item['prompt']}]}
+                    request = {'messages': [{'role': 'user', 'content': item['prompt']}]}
                     try:
                         async with client.stream('POST', address + '/chat/stream', json=request) as r:
                             r.raise_for_status()
@@ -116,12 +115,11 @@ async def main():
                                 event = json.loads(line)
                                 if event['event'] == 'routed':
                                     row.update(server=event['server_id'], queue_seconds=event['queue_seconds'], category=event['category'])
-                                elif event['event'] == 'chunk' and event['ollama'].get('done'):
-                                    row.update(actual_output_tokens=event['ollama']['eval_count'],
-                                               actual_input_tokens=event['ollama'].get('prompt_eval_count'))
                                 elif event['event'] == 'complete':
                                     row.update(success=True, ttft_seconds=event['ttft_seconds'],
-                                               mean_inter_chunk_seconds=event['mean_inter_chunk_seconds'])
+                                               mean_inter_chunk_seconds=event['mean_inter_chunk_seconds'],
+                                               actual_output_tokens=event['actual_output_tokens'],
+                                               actual_input_tokens=event['actual_prompt_tokens'])
                                 elif event['event'] == 'error':
                                     row['error'] = event.get('detail', 'unknown')
                     except (httpx.HTTPError, ValueError, KeyError) as exc:

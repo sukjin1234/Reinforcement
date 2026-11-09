@@ -4,7 +4,7 @@ from contextlib import closing
 import json
 import sqlite3
 from pathlib import Path
-from bandit import DIM
+from vllm_bandit import DIM
 
 
 def apply(source_path, target_path, backup_path, run_id):

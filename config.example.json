@@ -1,6 +1,7 @@
 {
-  "model": "qwen3:8b-q4_K_M",
-  "model_digest": "500a1f067a9f782620b40bee6f7b0c89e17ae61f686b92c24933e4ca4b2b8b41",
+  "backend": "vllm",
+  "model": "qwen3-8b",
+  "predictor_validation": "unvalidated_for_vllm",
   "predictor_path": "/home/ubuntu/qwen3_8b_100k_questions_bundle/token_predictor/artifacts/model.joblib",
   "category_model_path": "category_model.joblib",
   "metrics_token_env": "METRICS_TOKEN",
@@ -8,11 +9,30 @@
   "max_metric_age_seconds": 12,
   "request_timeout_seconds": 300,
   "queue_max_size": 100,
-  "queue_wait_seconds": 60,
-  "state_db": "round.sqlite3",
+  "queue_wait_seconds": 120,
+  "max_output_tokens": 4096,
+  "state_db": "vllm.sqlite3",
+  "policy": "linucb",
+  "training_enabled": true,
+  "bandit_alpha": 0.7,
   "servers": [
-    {"id": "server1", "metrics_url": "http://SERVER1:9109/metrics", "ollama_url": "http://SERVER1:11434", "max_inflight": 1},
-    {"id": "server2", "metrics_url": "http://SERVER2:9109/metrics", "ollama_url": "http://SERVER2:11434", "max_inflight": 1},
-    {"id": "server3", "metrics_url": "http://SERVER3:9109/metrics", "ollama_url": "http://SERVER3:11434", "max_inflight": 1}
+    {
+      "id": "server1",
+      "metrics_url": "http://SERVER1:9109/metrics",
+      "vllm_url": "http://SERVER1:8100",
+      "max_inflight": 2
+    },
+    {
+      "id": "server2",
+      "metrics_url": "http://SERVER2:9109/metrics",
+      "vllm_url": "http://SERVER2:8100",
+      "max_inflight": 2
+    },
+    {
+      "id": "server3",
+      "metrics_url": "http://SERVER3:9109/metrics",
+      "vllm_url": "http://SERVER3:8100",
+      "max_inflight": 2
+    }
   ]
 }

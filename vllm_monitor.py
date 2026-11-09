@@ -48,6 +48,14 @@ async def collect_one(client, server, config):
         machine = host.json()
         if not machine.get('gpus'):
             raise ValueError('GPU metrics unavailable')
+        def valid_percent(value):
+            return isinstance(value, (int, float)) and not isinstance(value, bool) and math.isfinite(value) and 0 <= value <= 100
+        if not all(valid_percent(machine.get(key)) for key in ('cpu_pct', 'memory_pct')):
+            raise ValueError('invalid CPU or memory metrics')
+        for gpu in machine['gpus']:
+            used, total = gpu.get('memory_used_mib'), gpu.get('memory_total_mib')
+            if not valid_percent(gpu.get('utilization_pct')) or any(not isinstance(v, (int, float)) or isinstance(v, bool) or not math.isfinite(v) for v in (used, total)) or not 0 <= used <= total or total <= 0:
+                raise ValueError('invalid GPU metrics')
         engine = parse_metrics(metrics.text)
         if engine['kv_cache_usage_perc'] > 1:
             raise ValueError('invalid KV cache fraction')

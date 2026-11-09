@@ -23,28 +23,27 @@ async def run(args):
     predictor = joblib.load(config['predictor_path'])
     classifier = joblib.load(config['category_model_path'])
     bucket_model = joblib.load(args.bucket_model)
-    endpoints = [s['ollama_url'].rstrip('/') for s in config['servers']]
+    endpoints = [s['vllm_url'].rstrip('/') for s in config['servers']]
     locks = [asyncio.Lock() for _ in endpoints]
     async with httpx.AsyncClient(timeout=300, trust_env=False) as client:
         async def send(index, item):
             endpoint_index = index % len(endpoints)
             async with locks[endpoint_index]:
                 payload = {'model': config['model'], 'messages': [{'role': 'user', 'content': item['prompt']}],
-                           'stream': False, 'think': False, 'keep_alive': '30m', 'options': predictor['metadata']['settings']}
+                           'stream': False, 'chat_template_kwargs': {'enable_thinking': False},
+                           'temperature': .7, 'top_p': .9, 'seed': 42, 'max_tokens': config.get('max_output_tokens', 4096)}
                 started = time.monotonic()
                 try:
-                    response = await client.post(endpoints[endpoint_index] + '/api/chat', json=payload)
+                    response = await client.post(endpoints[endpoint_index] + '/v1/chat/completions', json=payload)
                     response.raise_for_status()
                     result = response.json()
-                    actual_in, actual_out = result['prompt_eval_count'], result['eval_count']
+                    actual_in, actual_out = result['usage']['prompt_tokens'], result['usage']['completion_tokens']
                     classification = classify(classifier, item['prompt'])
                     cat = classification['category']
                     predicted = max(0, round(float(predictor['estimator'].predict([[actual_in, cat]])[0])))
                     estimated_bucket = predict_bucket(bucket_model, item['prompt'], actual_in, cat)
                     row = {'id': item['id'], 'status': 'ok', 'server_id': config['servers'][endpoint_index]['id'],
-                           'input_tokens': actual_in, 'output_tokens': actual_out, 'done_reason': result.get('done_reason'),
-                           'prompt_eval_duration': result.get('prompt_eval_duration'), 'prompt_eval_cached_count': result.get('prompt_eval_cached_count'),
-                           'eval_duration': result.get('eval_duration'),
+                           'input_tokens': actual_in, 'output_tokens': actual_out, 'done_reason': result['choices'][0]['finish_reason'],
                            'category': cat, 'category_score': classification['score'], 'predicted_tokens': predicted,
                            'bucket_prediction': estimated_bucket, 'elapsed_seconds': time.monotonic() - started}
                 except (httpx.HTTPError, KeyError, ValueError, TypeError) as exc:
@@ -74,7 +73,7 @@ async def run(args):
 if __name__ == '__main__':
     p = argparse.ArgumentParser()
     p.add_argument('--manifest', required=True)
-    p.add_argument('--config', default='config.json')
+    p.add_argument('--config', default='config.vllm.json')
     p.add_argument('--bucket-model', default='bucket_model.joblib')
     p.add_argument('--output', required=True)
     p.add_argument('--report', required=True)

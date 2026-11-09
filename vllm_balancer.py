@@ -1,4 +1,4 @@
-"""vLLM router; policy and observations are isolated from the Ollama deployment."""
+"""vLLM router with isolated policy and observations."""
 import asyncio
 import contextlib
 import json
@@ -24,6 +24,10 @@ from workload import snapshot
 class ChatRequest(BaseModel):
     messages: list[dict] = Field(min_length=1)
     category: str | None = Field(default=None, min_length=1)
+
+
+class CategoryRequest(BaseModel):
+    text: str = Field(min_length=1)
 
 
 @asynccontextmanager
@@ -65,6 +69,14 @@ async def lifespan(app):
 
 
 app = FastAPI(lifespan=lifespan)
+
+
+@app.post('/classify')
+async def classify_text(request: CategoryRequest):
+    try:
+        return classify(app.state.classifier, request.text)
+    except ValueError as exc:
+        raise HTTPException(422, str(exc)) from exc
 
 
 @app.get('/status')

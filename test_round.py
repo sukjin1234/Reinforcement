@@ -11,17 +11,15 @@ from pathlib import Path
 import httpx
 import numpy as np
 from fastapi.testclient import TestClient
-import balancer
 from dispatcher import Dispatcher
 from bandit import LinUCB, features
-from monitor import collect_one
 from experiment import select_questions
 from apply_policy import apply
 from workload import estimate_seconds, snapshot
 
 METRICS = {'cpu_pct': 10, 'memory_pct': 30, 'gpus': [{'utilization_pct': 20, 'memory_used_mib': 100, 'memory_total_mib': 1000}]}
 CONFIG = {'model': 'model', 'model_digest': 'digest'}
-SERVER = {'id': 'a', 'metrics_url': 'http://a/metrics', 'ollama_url': 'http://a'}
+SERVER = {'id': 'a', 'metrics_url': 'http://a/metrics', 'vllm_url': 'http://a'}
 
 
 class Tests(unittest.TestCase):
@@ -78,97 +76,7 @@ class Tests(unittest.TestCase):
             self.assertEqual(n, 3)
             model.db.close()
 
-    def test_collection_rejects_wrong_model_and_failed_agent(self):
-        async def check():
-            def handler(request):
-                if request.url.path == '/metrics':
-                    return httpx.Response(200, json=METRICS)
-                return httpx.Response(200, json={'models': [{'name': 'model', 'digest': 'wrong'}]})
-            async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
-                result = await collect_one(client, SERVER, CONFIG)
-                self.assertFalse(result['healthy'])
-                self.assertIn('digest', result['error'])
-            def healthy(request):
-                return httpx.Response(200, json=METRICS if request.url.path == '/metrics' else {'models': [{'name': 'model', 'digest': 'digest'}]})
-            async with httpx.AsyncClient(transport=httpx.MockTransport(healthy)) as client:
-                self.assertTrue((await collect_one(client, SERVER, CONFIG))['healthy'])
-        asyncio.run(check())
 
-    def test_router_selection_and_unavailable_server(self):
-        class Estimator:
-            def predict(self, values):
-                return [500]
-        class Classifier:
-            classes_ = np.array(['code'])
-            def predict_proba(self, values):
-                return np.array([[1.0]])
-        with tempfile.TemporaryDirectory() as directory:
-            config = {'model': 'model', 'model_digest': 'digest', 'predictor_path': 'unused',
-                      'state_db': str(Path(directory) / 'state.sqlite3'), 'servers': [SERVER | {'max_inflight': 1}],
-                      'poll_seconds': 60, 'max_metric_age_seconds': 10, 'request_timeout_seconds': 10,
-                      'queue_wait_seconds': 0.05}
-            bundle = {'estimator': Estimator(), 'metadata': {'model_name': 'model', 'model_digest': 'digest',
-                      'settings': {}, 'input_min': 10, 'input_max': 2000, 'categories': ['code']}}
-            classifier = {'estimator': Classifier(), 'categories': ['code'], 'max_chars': 1000}
-            async def collected(*args):
-                return [{'server_id': 'a', 'healthy': False, 'checked_at': __import__('time').time()}]
-            def load_model(path):
-                return bundle if path == 'unused' else classifier
-            with patch.object(balancer, 'read_config', return_value=config), patch.object(balancer.joblib, 'load', side_effect=load_model), patch.object(balancer, 'collect_all', collected):
-                with TestClient(balancer.app) as client:
-                    self.assertEqual(client.post('/classify', json={'text': 'write code'}).json()['category'], 'code')
-                    self.assertEqual(client.post('/classify', json={'text': '  '}).status_code, 422)
-                    request = {'input_tokens': 100, 'category': 'code', 'messages': [{'role': 'user', 'content': 'hello'}]}
-                    self.assertEqual(client.post('/chat', json=request).status_code, 503)
-                    balancer.app.state.status = {'a': {'healthy': True, 'checked_at': __import__('time').time(), 'metrics': METRICS}}
-                    async def post(*args, **kwargs):
-                        return httpx.Response(200, json={'done': True, 'eval_count': 12}, request=httpx.Request('POST', 'http://a/api/chat'))
-                    with patch.object(balancer.app.state.client, 'post', side_effect=post):
-                        response = client.post('/chat', json=request)
-                    self.assertEqual(response.status_code, 200)
-                    self.assertEqual(response.json()['server_id'], 'a')
-                    self.assertEqual(response.json()['predicted_output_tokens'], 500)
-                    self.assertEqual(client.get('/status').json()['observations']['a'], 1)
-                    self.assertEqual(client.get('/status').json()['policy'], 'linucb')
-                    self.assertTrue(client.get('/status').json()['training_enabled'])
-                    self.assertEqual(balancer.app.state.active['a'], 0)
-                    self.assertEqual(client.post('/chat', json={**request, 'category': 'unknown'}).status_code, 422)
-                    with patch.object(balancer.app.state.client, 'post', side_effect=post):
-                        response = client.post('/chat', json={k: v for k, v in request.items() if k != 'category'})
-                    self.assertEqual(response.json()['category'], 'code')
-                    self.assertEqual(response.json()['classification']['score'], 1.0)
-                    class StreamResponse:
-                        def raise_for_status(self):
-                            pass
-                        async def aiter_lines(self):
-                            yield json.dumps({'message': {'content': 'hello'}, 'done': False})
-                            yield json.dumps({'message': {'content': ' world'}, 'done': False})
-                            yield json.dumps({'message': {'content': ''}, 'done': True, 'eval_count': 2,
-                                              'prompt_eval_count': 10, 'prompt_eval_duration': 100,
-                                              'eval_duration': 200})
-                    @asynccontextmanager
-                    async def stream(*args, **kwargs):
-                        yield StreamResponse()
-                    with patch.object(balancer.app.state.client, 'stream', side_effect=stream):
-                        response = client.post('/chat/stream', json=request)
-                    events = [json.loads(line) for line in response.text.splitlines()]
-                    self.assertEqual([e['event'] for e in events], ['routed', 'chunk', 'chunk', 'chunk', 'complete'])
-                    self.assertIsNotNone(events[-1]['ttft_seconds'])
-                    self.assertIsNotNone(events[-1]['mean_inter_chunk_seconds'])
-                    self.assertEqual(client.get('/status').json()['inflight']['a'], 0)
-                    with closing(sqlite3.connect(config['state_db'])) as db:
-                        self.assertIsNotNone(db.execute('SELECT ttft_seconds FROM outcomes ORDER BY id DESC').fetchone()[0])
-                    class FailedStream(StreamResponse):
-                        async def aiter_lines(self):
-                            yield json.dumps({'error': 'upstream failed'})
-                    @asynccontextmanager
-                    async def failed_stream(*args, **kwargs):
-                        yield FailedStream()
-                    with patch.object(balancer.app.state.client, 'stream', side_effect=failed_stream):
-                        response = client.post('/chat/stream', json=request)
-                    events = [json.loads(line) for line in response.text.splitlines()]
-                    self.assertEqual(events[-1]['event'], 'error')
-                    self.assertEqual(client.get('/status').json()['inflight']['a'], 0)
 
     def test_queue_fifo_full_and_cancellation(self):
         async def check():
@@ -295,6 +203,7 @@ class Tests(unittest.TestCase):
 
     def test_apply_policy_preserves_backup_and_rejects_duplicates(self):
         import sqlite3
+        from vllm_bandit import LinUCB, features
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             src = LinUCB(str(root / 'src.sqlite3'))

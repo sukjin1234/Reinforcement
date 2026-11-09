@@ -23,7 +23,7 @@ async def run(config, output, once):
 
 if __name__ == '__main__':
     p = argparse.ArgumentParser()
-    p.add_argument('--config', default='config.json')
+    p.add_argument('--config', default='config.vllm.json')
     p.add_argument('--output', default='metrics.jsonl')
     p.add_argument('--once', action='store_true')
     args = p.parse_args()
