@@ -42,6 +42,7 @@ class Tests(unittest.TestCase):
             performance = reopened.recent_performance('a')
             self.assertEqual(performance['input_tokens_per_second'], 50)
             self.assertEqual(performance['uncached_input_tokens_per_second'], 40)
+            self.assertEqual(performance['uncached_rate_samples'], 1)
             self.assertEqual(performance['output_tokens_per_second'], 50)
             reopened.update('a', x, 10, True, 100, 'code', 500, 450, learn=False)
             self.assertEqual(reopened.state('a')[2], 1)
@@ -52,6 +53,16 @@ class Tests(unittest.TestCase):
         self.assertFalse(np.array_equal(features(METRICS, 100, 500, 0), features(METRICS, 100, 1000, 0)))
         self.assertFalse(np.array_equal(features(METRICS, 100, 500, 0),
                                         features(METRICS, 100, 500, 0, {'input_tokens_per_second': 1000, 'output_tokens_per_second': 50})))
+
+    def test_single_token_cache_miss_does_not_estimate_throughput(self):
+        with tempfile.TemporaryDirectory() as directory:
+            model = LinUCB(str(Path(directory) / 'cache.sqlite3'))
+            x = features(METRICS, 100, 500, 0)
+            model.update('a', x, 1, True, 100, 'code', 500, 100, prompt_count=100,
+                         prompt_duration_ns=1e7, eval_duration_ns=1e9, prompt_cached_count=99)
+            self.assertIsNone(model.recent_performance('a')['uncached_input_tokens_per_second'])
+            self.assertEqual(model.recent_performance('a')['uncached_rate_samples'], 0)
+            model.db.close()
 
     def test_old_policy_dimensions_are_preserved(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -291,7 +302,7 @@ class Tests(unittest.TestCase):
             x = features(METRICS, 100, 500, 0)
             dst.update('ai', x, 4, True, 100, 'code', 500, 100)
             for server in ('ai', 'ai1', 'ai2'):
-                src.update(server, x, 3, True, 100, 'code', 500, 100)
+                src.update(server, x, 3, True, 100, 'code', 500, 100, prompt_cached_count=10, ttft_seconds=.5)
             src.db.close()
             dst.db.close()
             result = apply(root / 'src.sqlite3', root / 'dst.sqlite3', root / 'backup.sqlite3', 'run1')
@@ -300,6 +311,7 @@ class Tests(unittest.TestCase):
                 self.assertEqual(backup.execute('select count(*) from outcomes').fetchone()[0], 1)
             with closing(sqlite3.connect(root / 'dst.sqlite3')) as live:
                 self.assertEqual(live.execute('select count(*) from outcomes').fetchone()[0], 4)
+                self.assertEqual(live.execute('select prompt_cached_count,ttft_seconds from outcomes order by id desc').fetchone(), (10.0, .5))
             with self.assertRaises(sqlite3.IntegrityError):
                 apply(root / 'src.sqlite3', root / 'dst.sqlite3', root / 'backup2.sqlite3', 'run1')
             with closing(sqlite3.connect(root / 'dst.sqlite3')) as live:

@@ -24,6 +24,11 @@ def apply(source_path, target_path, backup_path, run_id):
         columns = ['timestamp', 'server_id', 'input_tokens', 'category', 'predicted_tokens', 'actual_tokens',
                    'duration_seconds', 'success', 'reward', 'context', 'prompt_count', 'prompt_duration_ns',
                    'eval_duration_ns', 'queue_seconds']
+        source_columns = {r[1] for r in source.execute('PRAGMA table_info(outcomes)')}
+        target_columns = {r[1] for r in target.execute('PRAGMA table_info(outcomes)')}
+        for optional in ('ttft_seconds', 'mean_inter_chunk_seconds', 'prompt_cached_count'):
+            if optional in source_columns and optional in target_columns:
+                columns.append(optional)
         records = source.execute('SELECT ' + ','.join(columns) + ' FROM outcomes ORDER BY id').fetchall()
         if not records or any(not r[7] for r in records):
             raise ValueError('Training records are absent or include failures')

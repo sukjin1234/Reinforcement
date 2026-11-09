@@ -85,13 +85,16 @@ class LinUCB:
                      if r[count_idx] is not None and r[duration_idx] is not None
                      and r[count_idx] >= 0 and r[duration_idx] > 0]
             return (sum(x for x, _ in valid) * 1e9 / sum(d for _, d in valid)) if valid else None
+        # A one-token cache miss is dominated by fixed overhead and does not
+        # estimate throughput for a new prompt. Require a meaningful sample.
         cached_valid = [(r[1] - r[5], r[2]) for r in rows if r[1] is not None and r[5] is not None
-                        and r[2] is not None and 0 <= r[5] <= r[1] and r[2] > 0]
+                        and r[2] is not None and 0 <= r[5] <= r[1] and r[1] - r[5] >= 32 and r[2] > 0]
         def mean_optional(index):
             values = [r[index] for r in rows if r[index] is not None]
             return sum(values) / len(values) if values else None
         return {'samples': len(rows), 'mean_latency_seconds': sum(r[0] for r in rows) / len(rows) if rows else None,
                 'input_tokens_per_second': rate(1, 2),
                 'uncached_input_tokens_per_second': sum(n for n, _ in cached_valid) * 1e9 / sum(d for _, d in cached_valid) if cached_valid else None,
+                'uncached_rate_samples': len(cached_valid),
                 'output_tokens_per_second': rate(3, 4), 'mean_ttft_seconds': mean_optional(6),
                 'mean_inter_chunk_seconds': mean_optional(7)}
