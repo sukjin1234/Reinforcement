@@ -39,7 +39,11 @@ class Dispatcher:
                             if state.active[sid] >= server.get('max_inflight', 1):
                                 continue
                             perf = state.bandit.recent_performance(sid)
-                            x = features(snapshot['metrics'], input_tokens, predicted, state.active[sid], perf)
+                            if state.config.get('backend') == 'vllm':
+                                from vllm_bandit import features as vllm_features
+                                x = vllm_features(snapshot['metrics'], input_tokens, predicted, state.active[sid], perf, snapshot['vllm'])
+                            else:
+                                x = features(snapshot['metrics'], input_tokens, predicted, state.active[sid], perf)
                             own = estimate_seconds(input_tokens, predicted, perf)
                             existing = [work_snapshot(w)['estimated_remaining_seconds'] for w in state.active_work[sid].values()]
                             estimate = own + sum(existing) if own is not None and all(v is not None for v in existing) else None

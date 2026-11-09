@@ -1,0 +1,23 @@
+{
+  "backend": "vllm",
+  "model": "qwen3-8b",
+  "predictor_validation": "unvalidated_for_vllm",
+  "predictor_path": "/home/ubuntu/qwen3_8b_100k_questions_bundle/token_predictor/artifacts/model.joblib",
+  "category_model_path": "category_model.joblib",
+  "metrics_token_env": "METRICS_TOKEN",
+  "poll_seconds": 3,
+  "max_metric_age_seconds": 12,
+  "request_timeout_seconds": 300,
+  "queue_max_size": 100,
+  "queue_wait_seconds": 120,
+  "max_output_tokens": 4096,
+  "state_db": "vllm.sqlite3",
+  "policy": "linucb",
+  "training_enabled": true,
+  "bandit_alpha": 0.7,
+  "servers": [
+    {"id": "ai", "metrics_url": "http://127.0.0.1:9109/metrics", "vllm_url": "http://127.0.0.1:8100", "max_inflight": 2},
+    {"id": "ai1", "metrics_url": "http://127.0.0.1:19109/metrics", "vllm_url": "http://127.0.0.1:18100", "max_inflight": 2},
+    {"id": "ai2", "metrics_url": "http://127.0.0.1:29109/metrics", "vllm_url": "http://127.0.0.1:28100", "max_inflight": 2}
+  ]
+}
