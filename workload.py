@@ -4,7 +4,7 @@ import time
 
 
 def estimate_seconds(input_tokens, output_tokens, performance):
-    in_rate = performance.get('input_tokens_per_second')
+    in_rate = performance.get('uncached_input_tokens_per_second')
     out_rate = performance.get('output_tokens_per_second')
     if any(not isinstance(v, (int, float)) or not math.isfinite(v) or v <= 0 for v in (in_rate, out_rate)):
         return None

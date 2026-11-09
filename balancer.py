@@ -2,6 +2,7 @@
 import asyncio
 import contextlib
 import math
+import json
 import os
 import time
 from contextlib import asynccontextmanager
@@ -9,9 +10,11 @@ from contextlib import asynccontextmanager
 import httpx
 import joblib
 from fastapi import FastAPI, HTTPException
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
 from bandit import LinUCB
+from buckets import predict_bucket
 from category import classify
 from dispatcher import Dispatcher
 from monitor import collect_all, read_config
@@ -40,6 +43,7 @@ async def lifespan(app):
         raise RuntimeError('Classifier and token predictor categories do not match')
     app.state.config, app.state.bundle = config, bundle
     app.state.classifier = classifier
+    app.state.bucket_model = joblib.load(config['bucket_model_path']) if config.get('bucket_model_path') else None
     app.state.bandit = LinUCB(config['state_db'], alpha=config.get('bandit_alpha', 0.7))
     app.state.lock = asyncio.Lock()
     app.state.active = {s['id']: 0 for s in config['servers']}
@@ -95,16 +99,16 @@ async def status():
                 'observations': {s['id']: app.state.bandit.state(s['id'])[2] for s in app.state.config['servers']}}
 
 
-@app.post('/chat')
-async def chat(request: ChatRequest):
+def prepare(request):
     state = app.state
     meta = state.bundle['metadata']
     classification = None
+    user_messages = [m.get('content') for m in request.messages if m.get('role') == 'user']
+    user_text = user_messages[-1] if user_messages else None
     category = request.category
     if category is None:
-        user_messages = [m.get('content') for m in request.messages if m.get('role') == 'user']
         try:
-            classification = classify(state.classifier, user_messages[-1] if user_messages else None)
+            classification = classify(state.classifier, user_text)
         except ValueError as exc:
             raise HTTPException(422, str(exc)) from exc
         category = classification['category']
@@ -114,12 +118,19 @@ async def chat(request: ChatRequest):
     if not math.isfinite(predicted_float):
         raise HTTPException(500, 'Predictor returned a non-finite value')
     predicted = max(0, round(predicted_float))
+    bucket_prediction = predict_bucket(state.bucket_model, user_text, request.input_tokens, category) if state.bucket_model else None
+    return state, meta, category, classification, predicted, bucket_prediction
+
+
+@app.post('/chat')
+async def chat(request: ChatRequest):
+    state, meta, category, classification, predicted, bucket_prediction = prepare(request)
     server, x, queue_seconds, work_id = await state.dispatcher.reserve(request.input_tokens, predicted)
     sid = server['id']
     payload = {'model': state.config['model'], 'messages': request.messages,
                'stream': False, 'think': False, 'keep_alive': '30m', 'options': meta['settings']}
     started = time.monotonic()
-    success, actual, prompt_count, prompt_duration, eval_duration = False, None, None, None, None
+    success, actual, prompt_count, prompt_duration, eval_duration, prompt_cached = False, None, None, None, None, None
     try:
         response = await state.client.post(server['ollama_url'].rstrip('/') + '/api/chat', json=payload)
         response.raise_for_status()
@@ -127,12 +138,13 @@ async def chat(request: ChatRequest):
         if not isinstance(body, dict) or body.get('done') is not True or not isinstance(body.get('eval_count'), int):
             raise ValueError('Invalid Ollama response or missing token count')
         actual = body['eval_count']
-        prompt_count, prompt_duration, eval_duration = (body.get('prompt_eval_count'), body.get('prompt_eval_duration'), body.get('eval_duration'))
+        prompt_count, prompt_duration, eval_duration, prompt_cached = (body.get('prompt_eval_count'), body.get('prompt_eval_duration'), body.get('eval_duration'), body.get('prompt_eval_cached_count'))
         def positive_number(value):
             return value if isinstance(value, (int, float)) and not isinstance(value, bool) and math.isfinite(value) and value >= 0 else None
-        prompt_count, prompt_duration, eval_duration = map(positive_number, (prompt_count, prompt_duration, eval_duration))
+        prompt_count, prompt_duration, eval_duration, prompt_cached = map(positive_number, (prompt_count, prompt_duration, eval_duration, prompt_cached))
         success = True
         return {'server_id': sid, 'category': category, 'classification': classification, 'predicted_output_tokens': predicted,
+                'bucket_prediction': bucket_prediction,
                 'queue_seconds': queue_seconds,
                 'outside_training_range': not meta['input_min'] <= request.input_tokens <= meta['input_max'],
                 'ollama_response': body}
@@ -146,6 +158,89 @@ async def chat(request: ChatRequest):
             try:
                 state.bandit.update(sid, x, duration + queue_seconds, success, request.input_tokens, category,
                                     predicted, actual, prompt_count, prompt_duration, eval_duration, queue_seconds,
-                                    learn=state.config.get('training_enabled', True))
+                                    learn=state.config.get('training_enabled', True), prompt_cached_count=prompt_cached)
             finally:
                 state.dispatcher.condition.notify_all()
+
+
+@app.post('/chat/stream')
+async def chat_stream(request: ChatRequest):
+    accepted = time.monotonic()
+    state, meta, category, classification, predicted, bucket_prediction = prepare(request)
+
+    def event(kind, **kwargs):
+        return json.dumps({'event': kind, **kwargs}, ensure_ascii=False) + '\n'
+
+    async def generate():
+        try:
+            server, x, queue_seconds, work_id = await state.dispatcher.reserve(request.input_tokens, predicted)
+        except HTTPException as exc:
+            yield event('error', status=exc.status_code, detail=exc.detail)
+            return
+        sid = server['id']
+        started = time.monotonic()
+        payload = {'model': state.config['model'], 'messages': request.messages, 'stream': True,
+                   'think': False, 'keep_alive': '30m', 'options': meta['settings']}
+        success, cancelled, actual, prompt_count, prompt_duration, eval_duration, prompt_cached = False, False, None, None, None, None, None
+        first_content, last_content, intervals = None, None, []
+        try:
+            yield event('routed', server_id=sid, category=category, classification=classification,
+                        predicted_output_tokens=predicted, bucket_prediction=bucket_prediction,
+                        queue_seconds=queue_seconds)
+            async with state.client.stream('POST', server['ollama_url'].rstrip('/') + '/api/chat', json=payload) as response:
+                response.raise_for_status()
+                async for line in response.aiter_lines():
+                    if not line.strip():
+                        continue
+                    part = json.loads(line)
+                    if not isinstance(part, dict) or part.get('error'):
+                        raise ValueError('Invalid or error upstream chunk')
+                    message = part.get('message') or {}
+                    if not isinstance(message, dict):
+                        raise ValueError('Invalid message chunk')
+                    content = message.get('content')
+                    if content:
+                        now = time.monotonic()
+                        if first_content is None:
+                            first_content = now
+                        if last_content is not None:
+                            intervals.append(now - last_content)
+                        last_content = now
+                    if part.get('done'):
+                        if not isinstance(part.get('eval_count'), int) or isinstance(part.get('eval_count'), bool):
+                            raise ValueError('Missing output token count')
+                        actual = part['eval_count']
+                        def number(v):
+                            return v if isinstance(v, (int, float)) and not isinstance(v, bool) and math.isfinite(v) and v >= 0 else None
+                        prompt_count, prompt_duration, eval_duration, prompt_cached = map(number, (part.get('prompt_eval_count'), part.get('prompt_eval_duration'), part.get('eval_duration'), part.get('prompt_eval_cached_count')))
+                        success = True
+                    yield event('chunk', ollama=part)
+                    if success:
+                        break
+                if not success:
+                    raise ValueError('Upstream closed before final chunk')
+            yield event('complete', server_id=sid, queue_seconds=queue_seconds,
+                        ttft_seconds=first_content - accepted if first_content is not None else None,
+                        mean_inter_chunk_seconds=sum(intervals) / len(intervals) if intervals else None)
+        except (asyncio.CancelledError, GeneratorExit):
+            cancelled = True
+            raise
+        except (httpx.HTTPError, ValueError, TypeError) as exc:
+            yield event('error', status=502, detail=type(exc).__name__)
+        finally:
+            duration = time.monotonic() - started
+            async with state.dispatcher.condition:
+                state.active[sid] -= 1
+                state.active_work[sid].pop(work_id, None)
+                try:
+                    if not cancelled:
+                        state.bandit.update(sid, x, duration + queue_seconds, success, request.input_tokens, category,
+                                            predicted, actual, prompt_count, prompt_duration, eval_duration, queue_seconds,
+                                            learn=state.config.get('training_enabled', True),
+                                            ttft_seconds=first_content - accepted if first_content is not None else None,
+                                            mean_inter_chunk_seconds=sum(intervals) / len(intervals) if intervals else None,
+                                            prompt_cached_count=prompt_cached)
+                finally:
+                    state.dispatcher.condition.notify_all()
+
+    return StreamingResponse(generate(), media_type='application/x-ndjson')

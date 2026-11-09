@@ -1,8 +1,9 @@
 import asyncio
 import json
+import sqlite3
 import tempfile
 import unittest
-from contextlib import closing
+from contextlib import closing, asynccontextmanager
 from types import SimpleNamespace
 from unittest.mock import patch
 from pathlib import Path
@@ -31,7 +32,7 @@ class Tests(unittest.TestCase):
             x = features(METRICS, 100, 500, 0)
             prior = model.score('a', x)
             model.update('a', x, 20, True, 100, 'code', 500, 450,
-                         prompt_count=100, prompt_duration_ns=2e9, eval_duration_ns=9e9, queue_seconds=1)
+                         prompt_count=100, prompt_duration_ns=2e9, eval_duration_ns=9e9, queue_seconds=1, prompt_cached_count=20)
             self.assertLess(model.score('a', x), prior)
             self.assertEqual(model.state('a')[2], 1)
             model.db.close()
@@ -40,6 +41,7 @@ class Tests(unittest.TestCase):
             self.assertEqual(reopened.db.execute('select actual_tokens from outcomes').fetchone()[0], 450)
             performance = reopened.recent_performance('a')
             self.assertEqual(performance['input_tokens_per_second'], 50)
+            self.assertEqual(performance['uncached_input_tokens_per_second'], 40)
             self.assertEqual(performance['output_tokens_per_second'], 50)
             reopened.update('a', x, 10, True, 100, 'code', 500, 450, learn=False)
             self.assertEqual(reopened.state('a')[2], 1)
@@ -124,6 +126,38 @@ class Tests(unittest.TestCase):
                         response = client.post('/chat', json={k: v for k, v in request.items() if k != 'category'})
                     self.assertEqual(response.json()['category'], 'code')
                     self.assertEqual(response.json()['classification']['score'], 1.0)
+                    class StreamResponse:
+                        def raise_for_status(self):
+                            pass
+                        async def aiter_lines(self):
+                            yield json.dumps({'message': {'content': 'hello'}, 'done': False})
+                            yield json.dumps({'message': {'content': ' world'}, 'done': False})
+                            yield json.dumps({'message': {'content': ''}, 'done': True, 'eval_count': 2,
+                                              'prompt_eval_count': 10, 'prompt_eval_duration': 100,
+                                              'eval_duration': 200})
+                    @asynccontextmanager
+                    async def stream(*args, **kwargs):
+                        yield StreamResponse()
+                    with patch.object(balancer.app.state.client, 'stream', side_effect=stream):
+                        response = client.post('/chat/stream', json=request)
+                    events = [json.loads(line) for line in response.text.splitlines()]
+                    self.assertEqual([e['event'] for e in events], ['routed', 'chunk', 'chunk', 'chunk', 'complete'])
+                    self.assertIsNotNone(events[-1]['ttft_seconds'])
+                    self.assertIsNotNone(events[-1]['mean_inter_chunk_seconds'])
+                    self.assertEqual(client.get('/status').json()['inflight']['a'], 0)
+                    with closing(sqlite3.connect(config['state_db'])) as db:
+                        self.assertIsNotNone(db.execute('SELECT ttft_seconds FROM outcomes ORDER BY id DESC').fetchone()[0])
+                    class FailedStream(StreamResponse):
+                        async def aiter_lines(self):
+                            yield json.dumps({'error': 'upstream failed'})
+                    @asynccontextmanager
+                    async def failed_stream(*args, **kwargs):
+                        yield FailedStream()
+                    with patch.object(balancer.app.state.client, 'stream', side_effect=failed_stream):
+                        response = client.post('/chat/stream', json=request)
+                    events = [json.loads(line) for line in response.text.splitlines()]
+                    self.assertEqual(events[-1]['event'], 'error')
+                    self.assertEqual(client.get('/status').json()['inflight']['a'], 0)
 
     def test_queue_fifo_full_and_cancellation(self):
         async def check():
@@ -207,10 +241,30 @@ class Tests(unittest.TestCase):
 
     def test_remaining_estimate_marks_overdue_and_missing_rates(self):
         self.assertIsNone(estimate_seconds(100, 200, {}))
-        self.assertEqual(estimate_seconds(100, 200, {'input_tokens_per_second': 100, 'output_tokens_per_second': 50}), 5)
+        self.assertEqual(estimate_seconds(100, 200, {'uncached_input_tokens_per_second': 100, 'output_tokens_per_second': 50}), 5)
         result = snapshot({'start': 10, 'input_tokens': 100, 'predicted_output_tokens': 200, 'estimated_service_seconds': 5}, now=16)
         self.assertTrue(result['overdue'])
         self.assertEqual(result['estimated_remaining_seconds'], 0)
+
+    def test_shortest_predicted_policy_and_unknown_speed_fallback(self):
+        async def check():
+            import time
+            with tempfile.TemporaryDirectory() as directory:
+                bandit = LinUCB(str(Path(directory) / 'speed.sqlite3'))
+                x = features(METRICS, 100, 500, 0)
+                for sid, duration in [('a', 10e9), ('b', 2e9)]:
+                    bandit.update(sid, x, 10, True, 100, 'code', 500, 500,
+                                  prompt_count=100, prompt_duration_ns=1e9,
+                                  eval_duration_ns=duration, prompt_cached_count=0, learn=False)
+                servers = [{'id': sid, 'max_inflight': 1} for sid in ('a', 'b')]
+                state = SimpleNamespace(lock=asyncio.Lock(), bandit=bandit,
+                    config={'servers': servers, 'policy': 'shortest_predicted', 'max_metric_age_seconds': 10},
+                    active={'a': 0, 'b': 0}, active_work={'a': {}, 'b': {}},
+                    status={sid: {'healthy': True, 'checked_at': time.time(), 'metrics': METRICS} for sid in ('a', 'b')})
+                server, _, _, _ = await Dispatcher(state).reserve(100, 500)
+                self.assertEqual(server['id'], 'b')
+                bandit.db.close()
+        asyncio.run(check())
 
     def test_experiment_holds_out_domains_and_filters_truncated(self):
         with tempfile.TemporaryDirectory() as directory:
