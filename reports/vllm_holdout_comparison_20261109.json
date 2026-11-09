@@ -1,0 +1,39 @@
+{
+  "order": [
+    "round_robin",
+    "shortest_predicted",
+    "linucb"
+  ],
+  "policies": {
+    "round_robin": {
+      "success": 24,
+      "errors": 0,
+      "total_seconds": 9.58229405496968,
+      "mean_latency_seconds": 1.901158734287795,
+      "mean_queue_seconds": 0.0003952107848211502,
+      "requests_per_second": 2.504619443143977,
+      "generated_tokens_per_second": 358.26493951305304
+    },
+    "shortest_predicted": {
+      "success": 24,
+      "errors": 0,
+      "total_seconds": 9.525587072013877,
+      "mean_latency_seconds": 1.8768061525018613,
+      "mean_queue_seconds": 0.0004102705400631142,
+      "requests_per_second": 2.5195297485140697,
+      "generated_tokens_per_second": 360.3977344437001
+    },
+    "linucb": {
+      "success": 24,
+      "errors": 0,
+      "total_seconds": 9.304538819997106,
+      "mean_latency_seconds": 1.8485557998768247,
+      "mean_queue_seconds": 0.00040432449895888567,
+      "requests_per_second": 2.5793863042862197,
+      "generated_tokens_per_second": 364.87568762715483
+    }
+  },
+  "linucb_alpha": 0.0,
+  "training_enabled": false,
+  "limitations": "One run per policy, English SQuAD prompts with synthetic style instructions; shared caches and time ordering can affect results. Frozen LinUCB uses alpha=0; the live router may use another alpha. Not statistical proof of superiority."
+}
