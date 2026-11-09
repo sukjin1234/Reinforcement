@@ -8,7 +8,10 @@ import httpx
 
 NAMES = ('vllm:num_requests_running', 'vllm:num_requests_waiting',
          'vllm:kv_cache_usage_perc', 'vllm:prompt_tokens_total',
-         'vllm:generation_tokens_total')
+         'vllm:generation_tokens_total', 'vllm:request_prefill_kv_computed_tokens_sum',
+         'vllm:request_prefill_time_seconds_sum', 'vllm:request_generation_tokens_sum',
+         'vllm:request_decode_time_seconds_sum', 'vllm:request_queue_time_seconds_sum',
+         'vllm:request_queue_time_seconds_count')
 
 
 def parse_metrics(text):
@@ -48,7 +51,17 @@ async def collect_one(client, server, config):
         engine = parse_metrics(metrics.text)
         if engine['kv_cache_usage_perc'] > 1:
             raise ValueError('invalid KV cache fraction')
-        result.update(healthy=True, metrics=machine, vllm=engine)
+        def ratio(numerator, denominator, minimum=0):
+            n, d = engine.get(numerator), engine.get(denominator)
+            return n / d if n is not None and n >= minimum and d is not None and d > 0 else None
+        perf = {
+            'uncached_input_tokens_per_second': ratio('request_prefill_kv_computed_tokens_sum', 'request_prefill_time_seconds_sum', 32),
+            'input_tokens_per_second': ratio('request_prefill_kv_computed_tokens_sum', 'request_prefill_time_seconds_sum', 32),
+            'output_tokens_per_second': ratio('request_generation_tokens_sum', 'request_decode_time_seconds_sum'),
+            'mean_engine_queue_seconds': ratio('request_queue_time_seconds_sum', 'request_queue_time_seconds_count'),
+            'source': 'cumulative completed-request histogram; not instantaneous',
+        }
+        result.update(healthy=True, metrics=machine, vllm=engine, vllm_performance=perf)
     except (httpx.HTTPError, ValueError, KeyError, TypeError) as exc:
         result['error'] = f'{type(exc).__name__}: {exc}'
     result['checked_at'] = time.time()

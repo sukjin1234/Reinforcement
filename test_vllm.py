@@ -41,7 +41,7 @@ class TokenizationTests(unittest.IsolatedAsyncioTestCase):
         def handler(request):
             import json
             captured.append(json.loads(request.content))
-            return httpx.Response(200, json={'count': 17, 'tokens': [0] * 17})
+            return httpx.Response(200, json={'count': 17, 'tokens': [0] * 17, 'max_model_len': 20})
         class Estimator:
             def predict(self, rows):
                 self.rows = rows
@@ -55,10 +55,11 @@ class TokenizationTests(unittest.IsolatedAsyncioTestCase):
         app.state.bundle = {'metadata': {'categories': ['qa']}, 'estimator': estimator}
         request = ChatRequest(messages=[{'role': 'user', 'content': '안녕하세요'}], category='qa')
         try:
-            count, _, _, predicted = await prepare(request)
+            count, _, _, predicted, max_output = await prepare(request)
         finally:
             await client.aclose()
         self.assertEqual((count, predicted), (17, 23))
+        self.assertEqual(max_output, 3)
         self.assertEqual(estimator.rows, [[17, 'qa']])
         self.assertEqual(captured[0]['chat_template_kwargs'], {'enable_thinking': False})
 

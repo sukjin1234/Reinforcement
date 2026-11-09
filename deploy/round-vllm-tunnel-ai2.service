@@ -1,0 +1,11 @@
+[Unit]
+Description=Round private vLLM tunnel to ai2
+After=network-online.target
+Wants=network-online.target
+[Service]
+User=ubuntu
+ExecStart=/usr/bin/ssh -N -T -o BatchMode=yes -o ExitOnForwardFailure=yes -o ServerAliveInterval=15 -o ServerAliveCountMax=3 -o UserKnownHostsFile=/home/ubuntu/.ssh/round_known_hosts -o StrictHostKeyChecking=yes -i /home/ubuntu/.ssh/round_tunnel_ed25519 -L 127.0.0.1:28100:127.0.0.1:8100 ubuntu@172.31.32.245
+Restart=always
+RestartSec=3
+[Install]
+WantedBy=multi-user.target

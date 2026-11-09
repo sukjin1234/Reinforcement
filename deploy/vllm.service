@@ -1,0 +1,17 @@
+[Unit]
+Description=Round Qwen3 vLLM inference
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+User=ubuntu
+WorkingDirectory=/home/ubuntu
+Environment=VLLM_USE_FLASHINFER_SAMPLER=0
+Environment=OMP_NUM_THREADS=2
+ExecStart=/home/ubuntu/round-vllm-test/bin/vllm serve Qwen/Qwen3-8B-AWQ --revision 4da05a8edb55c6046cce958586c33b61da07bb79 --served-model-name qwen3-8b --host 127.0.0.1 --port 8100 --max-model-len 16384 --gpu-memory-utilization 0.85 --max-num-seqs 4
+Restart=on-failure
+RestartSec=10
+TimeoutStartSec=600
+
+[Install]
+WantedBy=multi-user.target

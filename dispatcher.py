@@ -40,6 +40,7 @@ class Dispatcher:
                                 continue
                             perf = state.bandit.recent_performance(sid)
                             if state.config.get('backend') == 'vllm':
+                                perf = {**perf, **snapshot.get('vllm_performance', {})}
                                 from vllm_bandit import features as vllm_features
                                 x = vllm_features(snapshot['metrics'], input_tokens, predicted, state.active[sid], perf, snapshot['vllm'])
                             else:

@@ -97,7 +97,7 @@ async def prepare(request):
         raise HTTPException(422, 'Unknown category')
     payload = {'model': state.config['model'], 'messages': messages,
                'chat_template_kwargs': {'enable_thinking': False}, 'add_generation_prompt': True}
-    count = None
+    count, max_model_len = None, None
     for server in state.config['servers']:
         row = state.status.get(server['id'], {})
         if not row.get('healthy') or time.time() - row['checked_at'] > state.config['max_metric_age_seconds']:
@@ -109,27 +109,34 @@ async def prepare(request):
             count = body.get('count')
             if not isinstance(count, int) or isinstance(count, bool) or count < 1:
                 raise ValueError('invalid token count')
+            max_model_len = body.get('max_model_len')
+            if not isinstance(max_model_len, int) or isinstance(max_model_len, bool) or max_model_len < 1:
+                raise ValueError('missing model context limit')
             break
         except (httpx.HTTPError, ValueError, TypeError):
+            count = None
             continue
     if count is None:
         raise HTTPException(503, 'No healthy tokenizer available')
+    if count >= max_model_len:
+        raise HTTPException(422, 'Input exceeds the model context limit')
+    max_output = min(state.config.get('max_output_tokens', 4096), max_model_len - count)
     predicted = float(state.bundle['estimator'].predict([[count, category]])[0])
     if not math.isfinite(predicted):
         raise HTTPException(500, 'Predictor returned a non-finite value')
-    return count, category, classification, max(0, round(predicted))
+    return count, category, classification, max(0, round(predicted)), max_output
 
 
 @app.post('/chat')
 async def chat(request: ChatRequest):
     state = app.state
-    count, category, classification, predicted = await prepare(request)
+    count, category, classification, predicted, max_output = await prepare(request)
     server, x, queue_seconds, work_id = await state.dispatcher.reserve(count, predicted)
     sid, started = server['id'], time.monotonic()
     actual, prompt, success = None, None, False
     try:
         payload = {'model': state.config['model'], 'messages': request.messages, 'stream': False,
-                   'chat_template_kwargs': {'enable_thinking': False}, 'max_tokens': state.config.get('max_output_tokens', 4096),
+                   'chat_template_kwargs': {'enable_thinking': False}, 'max_tokens': max_output,
                    'temperature': .7, 'top_p': .9, 'seed': 42}
         response = await state.client.post(server['vllm_url'].rstrip('/') + '/v1/chat/completions', json=payload)
         response.raise_for_status()
@@ -160,7 +167,7 @@ async def chat(request: ChatRequest):
 @app.post('/chat/stream')
 async def chat_stream(request: ChatRequest):
     state, accepted = app.state, time.monotonic()
-    count, category, classification, predicted = await prepare(request)
+    count, category, classification, predicted, max_output = await prepare(request)
 
     def event(kind, **data):
         return json.dumps({'event': kind, **data}, ensure_ascii=False) + '\n'
@@ -181,7 +188,7 @@ async def chat_stream(request: ChatRequest):
                         queue_seconds=queue_seconds)
             payload = {'model': state.config['model'], 'messages': request.messages, 'stream': True,
                        'stream_options': {'include_usage': True}, 'chat_template_kwargs': {'enable_thinking': False},
-                       'max_tokens': state.config.get('max_output_tokens', 4096),
+                       'max_tokens': max_output,
                        'temperature': .7, 'top_p': .9, 'seed': 42}
             done = False
             async with state.client.stream('POST', server['vllm_url'].rstrip('/') + '/v1/chat/completions', json=payload) as response:

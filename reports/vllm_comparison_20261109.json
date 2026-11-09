@@ -1,0 +1,39 @@
+{
+  "order": [
+    "round_robin",
+    "shortest_predicted",
+    "linucb"
+  ],
+  "policies": {
+    "round_robin": {
+      "success": 24,
+      "errors": 0,
+      "total_seconds": 8.57684752100613,
+      "mean_latency_seconds": 1.818512185374857,
+      "mean_queue_seconds": 0.00045754786939748254,
+      "requests_per_second": 2.7982309282309146,
+      "generated_tokens_per_second": 394.2007820145301
+    },
+    "shortest_predicted": {
+      "success": 24,
+      "errors": 0,
+      "total_seconds": 8.70573610800784,
+      "mean_latency_seconds": 1.8327391404527589,
+      "mean_queue_seconds": 0.0003927230427507311,
+      "requests_per_second": 2.7568030666498102,
+      "generated_tokens_per_second": 392.844436997598
+    },
+    "linucb": {
+      "success": 24,
+      "errors": 0,
+      "total_seconds": 8.774511888041161,
+      "mean_latency_seconds": 1.8244226167153101,
+      "mean_queue_seconds": 0.0006063252876629122,
+      "requests_per_second": 2.735194881063385,
+      "generated_tokens_per_second": 384.29488078940557
+    }
+  },
+  "limitations": "One run per policy, English SQuAD prompts with synthetic style instructions; shared caches and time ordering can affect results. Not statistical proof of superiority.",
+  "data_leakage": "These prompts had already updated the online policy; this is not a held-out policy evaluation.",
+  "linucb_alpha": 0.0
+}

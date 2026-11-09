@@ -1,0 +1,19 @@
+{
+  "training": {
+    "count": 60,
+    "success": 60,
+    "completed_without_limit": 60,
+    "token_mae": 474.1166666666667,
+    "mean_latency_seconds": 12.751124245802446,
+    "token_count_mismatches": 0
+  },
+  "prediction_check": {
+    "count": 24,
+    "success": 24,
+    "completed_without_limit": 24,
+    "token_mae": 640.0833333333334,
+    "mean_latency_seconds": 1.880740375786748,
+    "token_count_mismatches": 0
+  },
+  "limitations": "SQuAD questions are English, not representative Korean traffic. Online learning is enabled during evaluation; this is not a policy comparison."
+}
