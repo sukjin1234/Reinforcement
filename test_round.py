@@ -16,6 +16,7 @@ from bandit import LinUCB, features
 from monitor import collect_one
 from experiment import select_questions
 from apply_policy import apply
+from workload import estimate_seconds, snapshot
 
 METRICS = {'cpu_pct': 10, 'memory_pct': 30, 'gpus': [{'utilization_pct': 20, 'memory_used_mib': 100, 'memory_total_mib': 1000}]}
 CONFIG = {'model': 'model', 'model_digest': 'digest'}
@@ -133,7 +134,7 @@ class Tests(unittest.TestCase):
                 state = SimpleNamespace(lock=asyncio.Lock(), bandit=bandit,
                     config={'servers': [SERVER | {'max_inflight': 1}], 'max_metric_age_seconds': 10,
                             'queue_max_size': 1, 'queue_wait_seconds': 2},
-                    active={'a': 1}, status={'a': {'healthy': True, 'checked_at': time.time(), 'metrics': METRICS}})
+                    active={'a': 1}, active_work={'a': {}}, status={'a': {'healthy': True, 'checked_at': time.time(), 'metrics': METRICS}})
                 q = Dispatcher(state)
                 first = asyncio.create_task(q.reserve(100, 500))
                 await asyncio.sleep(0.01)
@@ -144,7 +145,7 @@ class Tests(unittest.TestCase):
                 async with q.condition:
                     state.active['a'] = 0
                     q.condition.notify_all()
-                server, _, delay = await first
+                server, _, delay, _ = await first
                 self.assertEqual(server['id'], 'a')
                 self.assertGreaterEqual(delay, 0)
                 self.assertEqual(state.active['a'], 1)
@@ -165,7 +166,7 @@ class Tests(unittest.TestCase):
                 state = SimpleNamespace(lock=asyncio.Lock(), bandit=bandit,
                     config={'servers': [SERVER | {'max_inflight': 1}], 'max_metric_age_seconds': 10,
                             'queue_max_size': 3, 'queue_wait_seconds': 2},
-                    active={'a': 1}, status={'a': {'healthy': True, 'checked_at': time.time(), 'metrics': METRICS}})
+                    active={'a': 1}, active_work={'a': {}}, status={'a': {'healthy': True, 'checked_at': time.time(), 'metrics': METRICS}})
                 q = Dispatcher(state)
                 first = asyncio.create_task(q.reserve(100, 500))
                 await asyncio.sleep(0.02)
@@ -193,16 +194,23 @@ class Tests(unittest.TestCase):
                 servers = [{'id': x, 'max_inflight': 1} for x in ('a', 'b', 'c')]
                 state = SimpleNamespace(lock=asyncio.Lock(), bandit=bandit,
                     config={'servers': servers, 'policy': 'round_robin', 'max_metric_age_seconds': 10},
-                    active=dict.fromkeys(('a', 'b', 'c'), 0),
+                    active=dict.fromkeys(('a', 'b', 'c'), 0), active_work={x: {} for x in ('a', 'b', 'c')},
                     status={x: {'healthy': True, 'checked_at': time.time(), 'metrics': METRICS} for x in ('a', 'b', 'c')})
                 dispatcher = Dispatcher(state)
                 chosen = []
                 for _ in range(3):
-                    server, _, _ = await dispatcher.reserve(100, 200)
+                    server, _, _, _ = await dispatcher.reserve(100, 200)
                     chosen.append(server['id'])
                 self.assertEqual(chosen, ['a', 'b', 'c'])
                 bandit.db.close()
         asyncio.run(check())
+
+    def test_remaining_estimate_marks_overdue_and_missing_rates(self):
+        self.assertIsNone(estimate_seconds(100, 200, {}))
+        self.assertEqual(estimate_seconds(100, 200, {'input_tokens_per_second': 100, 'output_tokens_per_second': 50}), 5)
+        result = snapshot({'start': 10, 'input_tokens': 100, 'predicted_output_tokens': 200, 'estimated_service_seconds': 5}, now=16)
+        self.assertTrue(result['overdue'])
+        self.assertEqual(result['estimated_remaining_seconds'], 0)
 
     def test_experiment_holds_out_domains_and_filters_truncated(self):
         with tempfile.TemporaryDirectory() as directory:

@@ -15,6 +15,7 @@ from bandit import LinUCB
 from category import classify
 from dispatcher import Dispatcher
 from monitor import collect_all, read_config
+from workload import snapshot
 
 
 class ChatRequest(BaseModel):
@@ -42,6 +43,7 @@ async def lifespan(app):
     app.state.bandit = LinUCB(config['state_db'], alpha=config.get('bandit_alpha', 0.7))
     app.state.lock = asyncio.Lock()
     app.state.active = {s['id']: 0 for s in config['servers']}
+    app.state.active_work = {s['id']: {} for s in config['servers']}
     app.state.status = {}
     app.state.dispatcher = Dispatcher(app.state)
     app.state.client = httpx.AsyncClient(timeout=config['request_timeout_seconds'], trust_env=False)
@@ -85,6 +87,7 @@ async def status():
                 'training_enabled': app.state.config.get('training_enabled', True),
                 'bandit_alpha': app.state.config.get('bandit_alpha', 0.7),
                 'servers': app.state.status, 'inflight': app.state.active,
+                'estimated_work': {sid: [snapshot(work) for work in works.values()] for sid, works in app.state.active_work.items()},
                 'queue': {'waiting': len(app.state.dispatcher.waiters),
                           'max_size': app.state.config.get('queue_max_size', 100),
                           'rejected': app.state.dispatcher.rejected, 'timed_out': app.state.dispatcher.timed_out},
@@ -111,7 +114,7 @@ async def chat(request: ChatRequest):
     if not math.isfinite(predicted_float):
         raise HTTPException(500, 'Predictor returned a non-finite value')
     predicted = max(0, round(predicted_float))
-    server, x, queue_seconds = await state.dispatcher.reserve(request.input_tokens, predicted)
+    server, x, queue_seconds, work_id = await state.dispatcher.reserve(request.input_tokens, predicted)
     sid = server['id']
     payload = {'model': state.config['model'], 'messages': request.messages,
                'stream': False, 'think': False, 'keep_alive': '30m', 'options': meta['settings']}
@@ -139,6 +142,7 @@ async def chat(request: ChatRequest):
         duration = time.monotonic() - started
         async with state.dispatcher.condition:
             state.active[sid] -= 1
+            state.active_work[sid].pop(work_id, None)
             try:
                 state.bandit.update(sid, x, duration + queue_seconds, success, request.input_tokens, category,
                                     predicted, actual, prompt_count, prompt_duration, eval_duration, queue_seconds,
