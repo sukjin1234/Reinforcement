@@ -1,6 +1,7 @@
 """Train LinUCB and compare frozen policy with round robin on the same requests."""
 import argparse
 import asyncio
+from contextlib import closing
 import json
 import os
 import random
@@ -51,7 +52,7 @@ def summary(rows, elapsed):
 
 
 def copy_database(src, dst):
-    with sqlite3.connect(src) as source, sqlite3.connect(dst) as target:
+    with closing(sqlite3.connect(src)) as source, closing(sqlite3.connect(dst)) as target:
         source.backup(target)
 
 
